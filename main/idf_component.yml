@@ -124,12 +124,12 @@ dependencies:
     - if: target in [esp32s3, esp32c5]
 
   espressif/touch_slider_sensor:
-    version: ^0.2.0~1
+    version: '*'
     rules:
     - if: target in [esp32s3]
 
   espressif/touch_button_sensor:
-    version: ^0.2.2~1
+    version: '*'
     rules:
     - if: target in [esp32s3]
 
