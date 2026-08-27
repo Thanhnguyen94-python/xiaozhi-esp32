@@ -16,6 +16,8 @@ set(SOURCES "audio/audio_codec.cc"
             "display/display.cc"
             "display/lcd_display.cc"
             "display/oled_display.cc"
+            "display/oled_custom_emoji_display.cc"
+            "display/robot_face/robot_face_profiles.cc"
             "display/lvgl_display/lvgl_display.cc"
             "display/emote_display.cc"
             "display/lvgl_display/emoji_collection.cc"
@@ -1178,6 +1180,27 @@ foreach(FILENAME IN LISTS FILES_TO_DOWNLOAD)
         endif()
     endif()
 endforeach()
+
+# Optional custom GIF override for ESP-HI.
+# Put your GIF files under ${PROJECT_DIR}/emoji and they will be converted to AAF
+# into ${CMAKE_BINARY_DIR}/emoji at configure time.
+set(ESP_HI_CUSTOM_GIF_DIR "${PROJECT_DIR}/emoji")
+file(GLOB_RECURSE ESP_HI_CUSTOM_GIF_FILES "${ESP_HI_CUSTOM_GIF_DIR}/*.gif")
+if(ESP_HI_CUSTOM_GIF_FILES)
+    set(GIF_TO_AAF_SCRIPT "${PROJECT_DIR}/managed_components/espressif2022__image_player/script/gif_to_aaf.py")
+    if(EXISTS "${GIF_TO_AAF_SCRIPT}")
+        message(STATUS "ESP-HI: found custom GIFs in ${ESP_HI_CUSTOM_GIF_DIR}, converting to AAF...")
+        execute_process(
+            COMMAND python "${GIF_TO_AAF_SCRIPT}" "${ESP_HI_CUSTOM_GIF_DIR}" "${EMOJI_DIR}" --split 16 --depth 4
+            RESULT_VARIABLE GIF_TO_AAF_RESULT
+        )
+        if(NOT GIF_TO_AAF_RESULT EQUAL 0)
+            message(FATAL_ERROR "ESP-HI: failed to convert custom GIFs to AAF, exit code: ${GIF_TO_AAF_RESULT}")
+        endif()
+    else()
+        message(WARNING "ESP-HI: gif_to_aaf.py not found at ${GIF_TO_AAF_SCRIPT}, skip custom GIF conversion")
+    endif()
+endif()
 
 endif()
 

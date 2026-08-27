@@ -232,7 +232,23 @@ def process_emoji_collection(emoji_collection_dir, assets_dir):
         "sad": ["crying"],
         "anger": ["angry"],
         "scare": ["surprised", "shocked"],
-        "buxue": ["thinking", "confused", "embarrassed"]
+        "buxue": ["thinking", "confused", "embarrassed"],
+
+        # Custom Vietnamese GIF filenames mapping
+        "1macdinh": ["neutral", "relaxed", "sleepy", "idle"],
+        "binhthuong": ["neutral", "relaxed", "sleepy", "idle"],
+        "vuive": ["happy", "laughing", "funny", "loving", "confident", "cool", "delicious", "kissy", "silly"],
+        "vuimung": ["happy", "laughing", "funny", "loving", "confident", "cool", "delicious", "kissy", "silly"],
+        "buon": ["sad", "crying"],
+        "buon2": ["sad", "crying"],
+        "buonngu": ["sleepy"],
+        "tucgian": ["angry"],
+        "tucgian2": ["angry"],
+        "ngacnhien2": ["surprised", "shocked"],
+        "suynghi2": ["thinking", "confused", "embarrassed"],
+        "chamhoi": ["thinking"],
+        "nhaymat": ["winking"],
+        "camlang": ["relaxed"],
     }
     
     # Copy each image from input directory to build/assets directory
@@ -722,6 +738,14 @@ def get_emoji_collection_path(default_emoji_collection, xiaozhi_fonts_path, proj
     # Special handling for otto-gif collection
     if default_emoji_collection == 'otto-gif':
         if project_root:
+            # Prefer project-level custom GIFs if available
+            custom_emoji_dir = os.path.join(project_root, 'emoji')
+            if os.path.exists(custom_emoji_dir):
+                for _, _, files in os.walk(custom_emoji_dir):
+                    if any(f.lower().endswith('.gif') for f in files):
+                        print(f"Using custom otto-gif directory: {custom_emoji_dir}")
+                        return custom_emoji_dir
+
             otto_gif_path = os.path.join(project_root, 'managed_components', 
                                         'txp666__otto-emoji-gif-component', 'gifs')
             if os.path.exists(otto_gif_path):

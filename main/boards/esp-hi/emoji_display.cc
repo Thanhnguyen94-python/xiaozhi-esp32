@@ -28,6 +28,20 @@ static const std::unordered_map<std::string, std::string> emoji_asset_name_map =
     {"scorn_loop", "scorn_loop.aaf"}
 };
 
+// Optional custom mapping for user GIFs converted to AAF by CMake.
+// See main/CMakeLists.txt (ESP-HI custom GIF conversion block).
+static const std::unordered_map<std::string, std::string> custom_emoji_asset_name_map = {
+    {"connecting", "1macdinh.aaf"},
+    {"wake", "vuimung.aaf"},
+    {"asking", "chamhoi.aaf"},
+    {"happy_loop", "vuive.aaf"},
+    {"sad_loop", "buon.aaf"},
+    {"anger_loop", "tucgian.aaf"},
+    {"panic_loop", "ngacnhien2.aaf"},
+    {"blink_quick", "nhaymat.aaf"},
+    {"scorn_loop", "camlang.aaf"}
+};
+
 bool EmojiPlayer::OnFlushIoReady(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_io_event_data_t *edata, void *user_ctx)
 {
     auto* disp_drv = static_cast<anim_player_handle_t*>(user_ctx);
@@ -81,9 +95,30 @@ void EmojiPlayer::StartPlayer(const std::string& asset_name, bool repeat, int fp
         size_t src_len = 0;
 
         auto& assets = Assets::GetInstance();
-        std::string filename = emoji_asset_name_map.at(asset_name);
-        if (!assets.GetAssetData(filename, src_data, src_len)) {
-            ESP_LOGE(TAG, "Failed to get asset data for %s", asset_name.c_str());
+        std::string filename;
+        bool loaded = false;
+
+        auto custom_it = custom_emoji_asset_name_map.find(asset_name);
+        if (custom_it != custom_emoji_asset_name_map.end()) {
+            filename = custom_it->second;
+            loaded = assets.GetAssetData(filename, src_data, src_len);
+            if (loaded) {
+                ESP_LOGI(TAG, "Using custom emoji asset: %s -> %s", asset_name.c_str(), filename.c_str());
+            }
+        }
+
+        if (!loaded) {
+            auto default_it = emoji_asset_name_map.find(asset_name);
+            if (default_it == emoji_asset_name_map.end()) {
+                ESP_LOGE(TAG, "Unknown asset key: %s", asset_name.c_str());
+                return;
+            }
+            filename = default_it->second;
+            loaded = assets.GetAssetData(filename, src_data, src_len);
+        }
+
+        if (!loaded) {
+            ESP_LOGE(TAG, "Failed to get asset data for key: %s", asset_name.c_str());
             return;
         }
 
