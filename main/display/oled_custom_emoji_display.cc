@@ -1,4 +1,5 @@
 #include "oled_custom_emoji_display.h"
+#include "robot_face/happy_face_frames.h"
 #include "robot_face/robot_face_profiles.h"
 
 #include <unordered_map>
@@ -13,6 +14,57 @@ LV_FONT_DECLARE(font_awesome_20_4);
 
 namespace {
 const char* TAG = "OledCustomEmoji";
+
+lv_image_dsc_t MakeMonoBitmap(const uint8_t* data, uint32_t size, uint16_t w, uint16_t h) {
+    lv_image_dsc_t image{};
+    image.header.magic = LV_IMAGE_HEADER_MAGIC;
+    image.header.cf = LV_COLOR_FORMAT_I1;
+    image.header.w = w;
+    image.header.h = h;
+    image.data_size = size;
+    image.data = data;
+    return image;
+}
+
+constexpr uint32_t kI1PaletteBytes = sizeof(lv_color32_t) * 2;
+constexpr uint32_t kHappyLvglDataSize = kI1PaletteBytes + robot_face::kHappyBitmapDataSize;
+uint8_t gHappyBitmap1Lvgl[kHappyLvglDataSize];
+uint8_t gHappyBitmap2Lvgl[kHappyLvglDataSize];
+lv_image_dsc_t kHappyBitmap1 = {};
+lv_image_dsc_t kHappyBitmap2 = {};
+bool gHappyBitmapReady = false;
+
+void EnsureHappyBitmapReady() {
+    if (gHappyBitmapReady) {
+        return;
+    }
+
+    lv_color32_t white{};
+    white.red = 0xFF;
+    white.green = 0xFF;
+    white.blue = 0xFF;
+    white.alpha = 0xFF;
+
+    lv_color32_t black{};
+    black.red = 0x00;
+    black.green = 0x00;
+    black.blue = 0x00;
+    black.alpha = 0xFF;
+
+    std::memcpy(gHappyBitmap1Lvgl, &white, sizeof(lv_color32_t));
+    std::memcpy(gHappyBitmap1Lvgl + sizeof(lv_color32_t), &black, sizeof(lv_color32_t));
+    std::memcpy(gHappyBitmap1Lvgl + kI1PaletteBytes, robot_face::Fr2_GIF1, robot_face::kHappyBitmapDataSize);
+
+    std::memcpy(gHappyBitmap2Lvgl, &white, sizeof(lv_color32_t));
+    std::memcpy(gHappyBitmap2Lvgl + sizeof(lv_color32_t), &black, sizeof(lv_color32_t));
+    std::memcpy(gHappyBitmap2Lvgl + kI1PaletteBytes, robot_face::Fr2_GIF2, robot_face::kHappyBitmapDataSize);
+
+    kHappyBitmap1 = MakeMonoBitmap(gHappyBitmap1Lvgl, kHappyLvglDataSize,
+        robot_face::kHappyBitmapWidth, robot_face::kHappyBitmapHeight);
+    kHappyBitmap2 = MakeMonoBitmap(gHappyBitmap2Lvgl, kHappyLvglDataSize,
+        robot_face::kHappyBitmapWidth, robot_face::kHappyBitmapHeight);
+    gHappyBitmapReady = true;
+}
 }
 
 namespace {
@@ -68,7 +120,7 @@ const std::unordered_map<std::string, const char*> kFolderEmojiNameToOledEmotion
     {"suynghi2", "thinking"},
     {"tucgian", "angry"},
     {"tucgian2", "angry"},
-    {"vuimung", "confident"},
+    {"vuimung", "excited"},
     {"vuive", "happy"},
 };
 
@@ -102,6 +154,8 @@ bool OledCustomEmojiDisplay::IsFaceMode() const {
 void OledCustomEmojiDisplay::SetupFaceUI_128x64() {
     auto screen = lv_screen_active();
 
+    EnsureHappyBitmapReady();
+
     lv_obj_set_style_bg_color(screen, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
 
@@ -113,21 +167,43 @@ void OledCustomEmojiDisplay::SetupFaceUI_128x64() {
     lv_obj_set_style_bg_color(face_root_, lv_color_white(), 0);
     lv_obj_set_scrollbar_mode(face_root_, LV_SCROLLBAR_MODE_OFF);
 
+    // 1. Khung mắt trái (Đen)
     left_eye_ = lv_obj_create(face_root_);
     lv_obj_set_style_bg_color(left_eye_, lv_color_black(), 0);
     lv_obj_set_style_border_width(left_eye_, 0, 0);
-    lv_obj_set_style_radius(left_eye_, 5, 0);
+    lv_obj_set_style_radius(left_eye_, 3, 0);
+    lv_obj_set_style_pad_all(left_eye_, 0, 0); // ĐÃ THÊM: Xóa padding để tròng mắt không bị đẩy
 
+    // Tròng mắt trái (Trắng - để nổi bật trên nền mắt đen)
+    left_pupil_ = lv_obj_create(left_eye_);
+    lv_obj_set_style_bg_color(left_pupil_, lv_color_white(), 0);
+    lv_obj_set_style_border_width(left_pupil_, 0, 0);
+    lv_obj_set_style_radius(left_pupil_, 0, 0);
+    lv_obj_set_style_pad_all(left_pupil_, 0, 0);
+
+    // 2. Khung mắt phải (Đen)
     right_eye_ = lv_obj_create(face_root_);
     lv_obj_set_style_bg_color(right_eye_, lv_color_black(), 0);
     lv_obj_set_style_border_width(right_eye_, 0, 0);
-    lv_obj_set_style_radius(right_eye_, 5, 0);
+    lv_obj_set_style_radius(right_eye_, 3, 0);
+    lv_obj_set_style_pad_all(right_eye_, 0, 0); // ĐÃ THÊM: Xóa padding
+
+    // Tròng mắt phải (Trắng)
+    right_pupil_ = lv_obj_create(right_eye_);
+    lv_obj_set_style_bg_color(right_pupil_, lv_color_white(), 0);
+    lv_obj_set_style_border_width(right_pupil_, 0, 0);
+    lv_obj_set_style_radius(right_pupil_, 0, 0);
+    lv_obj_set_style_pad_all(right_pupil_, 0, 0);
 
     mouth_label_ = lv_label_create(face_root_);
     lv_obj_set_width(mouth_label_, LV_HOR_RES);
     lv_obj_set_style_text_align(mouth_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(mouth_label_, lv_color_black(), 0);
     lv_obj_align(mouth_label_, LV_ALIGN_TOP_MID, 0, (height_ == 32) ? 43 : 21);
+
+    happy_bitmap_ = lv_image_create(face_root_);
+    lv_obj_align(happy_bitmap_, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_add_flag(happy_bitmap_, LV_OBJ_FLAG_HIDDEN);
 
     blink_closed_ = false;
     frame_count_ = 0;
@@ -233,6 +309,11 @@ void OledCustomEmojiDisplay::AnimateFaceTick() {
         need_render = true;
     }
 
+    if (std::strcmp(current_face_emotion_, "happy") == 0 && height_ == 64) {
+        happy_frame_ = (happy_frame_ + 1) % 2;
+        need_render = true;
+    }
+
     if (need_render) {
         RenderFace();
     }
@@ -245,12 +326,54 @@ void OledCustomEmojiDisplay::RenderFace() {
 
     const bool compact = (height_ <= 32);
 
+    if (!compact && std::strcmp(current_face_emotion_, "happy") == 0 && happy_bitmap_ != nullptr) {
+        lv_obj_add_flag(left_eye_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(right_eye_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(mouth_label_, LV_OBJ_FLAG_HIDDEN);
+        if (left_pupil_ != nullptr) {
+            lv_obj_add_flag(left_pupil_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (right_pupil_ != nullptr) {
+            lv_obj_add_flag(right_pupil_, LV_OBJ_FLAG_HIDDEN);
+        }
+
+        lv_image_set_src(happy_bitmap_, (happy_frame_ == 0) ? &kHappyBitmap1 : &kHappyBitmap2);
+        lv_obj_clear_flag(happy_bitmap_, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    if (happy_bitmap_ != nullptr) {
+        lv_obj_add_flag(happy_bitmap_, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_clear_flag(left_eye_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(right_eye_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(mouth_label_, LV_OBJ_FLAG_HIDDEN);
+
     const robot_face::FaceStyle style = robot_face::GetStyle(current_face_emotion_, compact, blink_closed_);
 
-    lv_obj_set_size(left_eye_, style.eye_w, style.eye_h);
-    lv_obj_set_pos(left_eye_, style.left_x, style.eye_y);
-    lv_obj_set_size(right_eye_, style.eye_w, style.eye_h);
-    lv_obj_set_pos(right_eye_, style.right_x, style.eye_y);
+    // vẽ mắt trái
+    lv_obj_set_size(left_eye_, style.left_eye_w, style.left_eye_h);
+    lv_obj_set_pos(left_eye_, style.left_eye_x, style.left_eye_y);
+
+    // vẽ mắt phải
+    lv_obj_set_size(right_eye_, style.right_eye_w, style.right_eye_h);
+    lv_obj_set_pos(right_eye_, style.right_eye_x, style.right_eye_y);
+
+    // Vẽ tròng mắt
+    if (style.show_pupil && !blink_closed_) {
+        lv_obj_clear_flag(left_pupil_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(right_pupil_, LV_OBJ_FLAG_HIDDEN);
+
+        lv_obj_set_size(left_pupil_, style.pupil_w, style.pupil_h);
+        lv_obj_set_pos(left_pupil_, style.pupil_left_x, style.pupil_left_y);
+
+        lv_obj_set_size(right_pupil_, style.pupil_w, style.pupil_h);
+        lv_obj_set_pos(right_pupil_, style.pupil_right_x, style.pupil_right_y);
+    } else {
+        // Ẩn tròng mắt khi chớp mắt hoặc khi style không bật
+        lv_obj_add_flag(left_pupil_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(right_pupil_, LV_OBJ_FLAG_HIDDEN);
+    }
 
     const char* mouth = style.mouth;
     if (speaking_ && std::strcmp(current_face_emotion_, "sleepy") != 0) {

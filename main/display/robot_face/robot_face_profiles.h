@@ -3,11 +3,25 @@
 namespace robot_face {
 
 struct FaceStyle {
-    int eye_w;
-    int eye_h;
-    int eye_y;
-    int left_x;
-    int right_x;
+    // mắt trái
+    int left_eye_w;
+    int left_eye_h;
+    int left_eye_y;
+    int left_eye_x;
+    // mắt phải
+    int right_eye_w;
+    int right_eye_h;
+    int right_eye_y;
+    int right_eye_x;
+    // Tròng mắt (Pupil)
+    bool show_pupil;       // Bật/Tắt vẽ tròng mắt
+    int pupil_w;           // Chiều rộng tròng mắt
+    int pupil_h;           // Chiều cao tròng mắt
+    int pupil_left_x;      // Vị trí X tròng mắt trái
+    int pupil_right_x;     // Vị trí X tròng mắt phải
+    int pupil_left_y;           // Vị trí Y tròng mắt
+    int pupil_right_y;          // Vị trí Y tròng mắt
+    // miệng
     const char* mouth;
 };
 

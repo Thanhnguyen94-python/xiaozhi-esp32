@@ -26,6 +26,10 @@ private:
     lv_obj_t* right_eye_ = nullptr;
     lv_obj_t* mouth_label_ = nullptr;
     lv_timer_t* face_timer_ = nullptr;
+    lv_obj_t* happy_bitmap_ = nullptr;
+    // Thêm 2 dòng này vào phần private của class OledCustomEmojiDisplay
+    lv_obj_t* left_pupil_ = nullptr;
+    lv_obj_t* right_pupil_ = nullptr;
 
     const char* current_face_emotion_ = "neutral";
     bool blink_closed_ = false;
@@ -34,6 +38,7 @@ private:
     uint8_t blink_phase_ = 0;
     bool speaking_ = false;
     uint8_t speaking_frame_ = 0;
+    uint8_t happy_frame_ = 0;
 
     bool IsFaceMode() const;
     void SetupFaceUI_128x64();
