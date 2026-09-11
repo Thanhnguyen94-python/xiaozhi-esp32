@@ -52,6 +52,16 @@
 #define DISPLAY_MIRROR_X true
 #define DISPLAY_MIRROR_Y true
 
+// SD card over SPI (4-wire)
+#define SDCARD_SPI_MISO GPIO_NUM_12
+#define SDCARD_SPI_MOSI GPIO_NUM_13
+#define SDCARD_SPI_SCLK GPIO_NUM_14
+// CS là bắt buộc cho SDSPI. Nếu dây CS của bạn đang nối chân khác, sửa lại macro này.
+// Mặc định dùng GPIO10 (thường dễ đi dây trên ESP32-S3 mini board).
+#define SDCARD_SPI_CS   GPIO_NUM_10
+#define SDCARD_SPI_MAX_FREQ_KHZ 4000
+#define SDCARD_MOUNT_POINT "/sdcard"
+
 
 // A MCP Test: Control a lamp
 #define LAMP_GPIO GPIO_NUM_18

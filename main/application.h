@@ -11,6 +11,8 @@
 #include <deque>
 #include <memory>
 #include <functional>
+#include <vector>
+#include <atomic>
 
 #include "protocol.h"
 #include "ota.h"
@@ -113,6 +115,10 @@ public:
     void SetAecMode(AecMode mode);
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
+    bool PlaySdCardMusicByMood(const std::string& mood_or_emotion);
+    bool PlaySdCardMusicByQuery(const std::string& query, const std::string& mood_hint = "");
+    bool StopSdCardMusic();
+    bool PlayNextSdCardMusic();
     AudioService& GetAudioService() { return audio_service_; }
     
     /**
@@ -146,6 +152,15 @@ private:
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
+    TaskHandle_t sd_music_task_handle_ = nullptr;
+    std::mutex sd_music_mutex_;
+    std::vector<std::string> sd_music_playlist_;
+    int sd_music_index_ = -1;
+    bool sd_music_stop_requested_ = false;
+    uint32_t sd_music_generation_ = 0;
+    std::atomic<bool> sd_music_active_{false};
+    bool sd_music_autoplay_next_ = false;
+    bool sd_music_shuffle_mode_ = false;
 
 
     // Event handlers
@@ -168,6 +183,8 @@ private:
     void CheckNewVersion();
     void InitializeProtocol();
     void ShowActivationCode(const std::string& code, const std::string& message);
+    bool StartSdMusicPlaybackLocked(const std::string& path);
+    bool StartSdMusicPlaybackPath(const std::string& path);
     void SetListeningMode(ListeningMode mode);
     ListeningMode GetDefaultListeningMode() const;
     

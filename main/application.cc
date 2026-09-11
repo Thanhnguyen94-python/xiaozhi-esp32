@@ -11,13 +11,279 @@
 #include "settings.h"
 
 #include <cstring>
+#include <cctype>
+#include <algorithm>
+#include <cstdio>
+#include <new>
+#include <array>
+#include <utility>
+#include <vector>
+#include <dirent.h>
 #include <esp_log.h>
+#include <esp_random.h>
 #include <cJSON.h>
 #include <driver/gpio.h>
 #include <arpa/inet.h>
 #include <font_awesome.h>
 
 #define TAG "Application"
+
+namespace {
+
+std::string ToLowerCopy(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return s;
+}
+
+void ReplaceAll(std::string& s, const char* from, const char* to) {
+    if (from == nullptr || to == nullptr || *from == '\0') {
+        return;
+    }
+    size_t pos = 0;
+    size_t from_len = std::strlen(from);
+    size_t to_len = std::strlen(to);
+    while ((pos = s.find(from, pos)) != std::string::npos) {
+        s.replace(pos, from_len, to);
+        pos += to_len;
+    }
+}
+
+std::string RemoveAudioExtension(const std::string& file_name) {
+    if (file_name.size() > 4) {
+        auto lower = ToLowerCopy(file_name);
+        if (lower.compare(lower.size() - 4, 4, ".mp3") == 0 ||
+            lower.compare(lower.size() - 4, 4, ".ogg") == 0) {
+            return file_name.substr(0, file_name.size() - 4);
+        }
+    }
+    return file_name;
+}
+
+std::string NormalizeVietnameseSearchText(std::string s) {
+    s = ToLowerCopy(s);
+
+    static const std::array<std::pair<const char*, const char*>, 67> kVietnameseMap{{
+        {"à", "a"}, {"á", "a"}, {"ạ", "a"}, {"ả", "a"}, {"ã", "a"},
+        {"â", "a"}, {"ầ", "a"}, {"ấ", "a"}, {"ậ", "a"}, {"ẩ", "a"}, {"ẫ", "a"},
+        {"ă", "a"}, {"ằ", "a"}, {"ắ", "a"}, {"ặ", "a"}, {"ẳ", "a"}, {"ẵ", "a"},
+        {"è", "e"}, {"é", "e"}, {"ẹ", "e"}, {"ẻ", "e"}, {"ẽ", "e"},
+        {"ê", "e"}, {"ề", "e"}, {"ế", "e"}, {"ệ", "e"}, {"ể", "e"}, {"ễ", "e"},
+        {"ì", "i"}, {"í", "i"}, {"ị", "i"}, {"ỉ", "i"}, {"ĩ", "i"},
+        {"ò", "o"}, {"ó", "o"}, {"ọ", "o"}, {"ỏ", "o"}, {"õ", "o"},
+        {"ô", "o"}, {"ồ", "o"}, {"ố", "o"}, {"ộ", "o"}, {"ổ", "o"}, {"ỗ", "o"},
+        {"ơ", "o"}, {"ờ", "o"}, {"ớ", "o"}, {"ợ", "o"}, {"ở", "o"}, {"ỡ", "o"},
+        {"ù", "u"}, {"ú", "u"}, {"ụ", "u"}, {"ủ", "u"}, {"ũ", "u"},
+        {"ư", "u"}, {"ừ", "u"}, {"ứ", "u"}, {"ự", "u"}, {"ử", "u"}, {"ữ", "u"},
+        {"ỳ", "y"}, {"ý", "y"}, {"ỵ", "y"}, {"ỷ", "y"}, {"ỹ", "y"},
+        {"đ", "d"}
+    }};
+
+    for (const auto& kv : kVietnameseMap) {
+        ReplaceAll(s, kv.first, kv.second);
+    }
+
+    for (char& c : s) {
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) {
+            c = ' ';
+        }
+    }
+
+    std::string compact;
+    compact.reserve(s.size());
+    bool last_space = true;
+    for (char c : s) {
+        if (c == ' ') {
+            if (!last_space) {
+                compact.push_back(' ');
+            }
+            last_space = true;
+        } else {
+            compact.push_back(c);
+            last_space = false;
+        }
+    }
+    if (!compact.empty() && compact.back() == ' ') {
+        compact.pop_back();
+    }
+    return compact;
+}
+
+std::vector<std::string> ExtractMeaningfulTokens(const std::string& normalized) {
+    static const std::array<const char*, 24> kStopwords{{
+        "mo", "phat", "nhac", "bai", "hat", "giup", "toi", "cho", "di", "nhe", "nha",
+        "oi", "va", "la", "mot", "baihat", "baih", "play", "music", "please", "hay", "duoc", "khong", "vo"
+    }};
+
+    std::vector<std::string> tokens;
+    size_t start = 0;
+    while (start < normalized.size()) {
+        size_t end = normalized.find(' ', start);
+        std::string token = (end == std::string::npos)
+            ? normalized.substr(start)
+            : normalized.substr(start, end - start);
+        if (!token.empty()) {
+            bool skip = token.size() <= 1;
+            if (!skip) {
+                for (const auto* sw : kStopwords) {
+                    if (token == sw) {
+                        skip = true;
+                        break;
+                    }
+                }
+            }
+            if (!skip) {
+                tokens.push_back(token);
+            }
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
+    }
+    return tokens;
+}
+
+bool HasOggExtension(const std::string& file_name) {
+    auto lower = ToLowerCopy(file_name);
+    return lower.size() > 4 && lower.compare(lower.size() - 4, 4, ".ogg") == 0;
+}
+
+bool HasMp3Extension(const std::string& file_name) {
+    auto lower = ToLowerCopy(file_name);
+    return lower.size() > 4 && lower.compare(lower.size() - 4, 4, ".mp3") == 0;
+}
+
+std::string ResolveSdMusicFolder(const std::string& mood_or_emotion) {
+    auto key = ToLowerCopy(mood_or_emotion);
+
+    if (key == "vuive" || key == "happy" || key == "laughing" || key == "joy" || key == "excited") {
+        return "/sdcard/music/vuive";
+    }
+    if (key == "buon" || key == "sad" || key == "crying" || key == "confused" || key == "angry") {
+        return "/sdcard/music/buon";
+    }
+    return "";
+}
+
+const char* kSdMusicHappyFolder = "/sdcard/music/vuive";
+const char* kSdMusicSadFolder = "/sdcard/music/buon";
+
+std::string BaseNameFromPath(const std::string& path) {
+    size_t pos = path.find_last_of("/\\");
+    if (pos == std::string::npos) {
+        return path;
+    }
+    return path.substr(pos + 1);
+}
+
+std::vector<std::string> ResolveSdMusicSearchFolders(const std::string& mood_hint) {
+    std::vector<std::string> folders;
+    std::string single = ResolveSdMusicFolder(mood_hint);
+    if (!single.empty()) {
+        folders.emplace_back(std::move(single));
+        return folders;
+    }
+    folders.emplace_back(kSdMusicHappyFolder);
+    folders.emplace_back(kSdMusicSadFolder);
+    return folders;
+}
+
+void CollectAudioCandidatesFromFolder(const std::string& folder, std::vector<std::string>& out) {
+    DIR* dir = opendir(folder.c_str());
+    if (dir == nullptr) {
+        return;
+    }
+    struct dirent* entry = nullptr;
+    while ((entry = readdir(dir)) != nullptr) {
+        if (entry->d_name[0] == '.') {
+            continue;
+        }
+        std::string name(entry->d_name);
+        if (HasOggExtension(name) || HasMp3Extension(name)) {
+            out.emplace_back(folder + "/" + name);
+        }
+    }
+    closedir(dir);
+}
+
+int MatchScore(const std::string& file_name_lower, const std::string& query_lower) {
+    if (query_lower.empty()) {
+        return 0;
+    }
+    int score = 0;
+    auto full_pos = file_name_lower.find(query_lower);
+    if (full_pos != std::string::npos) {
+        score += 100;
+        if (full_pos == 0) {
+            score += 20;
+        }
+    }
+
+    size_t start = 0;
+    while (start < query_lower.size()) {
+        while (start < query_lower.size() && query_lower[start] == ' ') {
+            ++start;
+        }
+        if (start >= query_lower.size()) {
+            break;
+        }
+        size_t end = query_lower.find(' ', start);
+        std::string token = (end == std::string::npos)
+            ? query_lower.substr(start)
+            : query_lower.substr(start, end - start);
+        if (!token.empty() && file_name_lower.find(token) != std::string::npos) {
+            score += 15;
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
+    }
+    return score;
+}
+
+int MatchScoreAdvanced(const std::string& file_name, const std::string& query) {
+    std::string base_name = RemoveAudioExtension(file_name);
+    std::string file_norm = NormalizeVietnameseSearchText(base_name);
+    std::string query_norm = NormalizeVietnameseSearchText(query);
+    if (query_norm.empty()) {
+        return 0;
+    }
+
+    int score = 0;
+    if (file_norm == query_norm) {
+        score += 500;
+    }
+
+    if (file_norm.find(query_norm) != std::string::npos) {
+        score += 140;
+    }
+
+    std::string file_nospace = file_norm;
+    file_nospace.erase(std::remove(file_nospace.begin(), file_nospace.end(), ' '), file_nospace.end());
+    std::string query_nospace = query_norm;
+    query_nospace.erase(std::remove(query_nospace.begin(), query_nospace.end(), ' '), query_nospace.end());
+    if (!query_nospace.empty() && file_nospace.find(query_nospace) != std::string::npos) {
+        score += 120;
+    }
+
+    auto tokens = ExtractMeaningfulTokens(query_norm);
+    for (const auto& token : tokens) {
+        if (file_norm.find(token) != std::string::npos) {
+            score += 35;
+            if (file_norm.rfind(token, 0) == 0) {
+                score += 10;
+            }
+        }
+    }
+
+    score += MatchScore(ToLowerCopy(base_name), ToLowerCopy(query));
+    return score;
+}
+
+} // namespace
 
 
 Application::Application() {
@@ -531,7 +797,9 @@ void Application::InitializeProtocol() {
             } else if (strcmp(state->valuestring, "stop") == 0) {
                 Schedule([this]() {
                     if (GetDeviceState() == kDeviceStateSpeaking) {
-                        if (listening_mode_ == kListeningModeManualStop) {
+                        if (sd_music_active_.load()) {
+                            SetDeviceState(kDeviceStateIdle);
+                        } else if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
                         } else {
                             SetDeviceState(kDeviceStateListening);
@@ -730,6 +998,11 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
 }
 
 void Application::HandleStartListeningEvent() {
+    if (sd_music_active_.load()) {
+        StopSdCardMusic();
+        vTaskDelay(pdMS_TO_TICKS(60));
+    }
+
     auto state = GetDeviceState();
     
     if (state == kDeviceStateActivating) {
@@ -780,6 +1053,12 @@ void Application::HandleStopListeningEvent() {
 void Application::HandleWakeWordDetectedEvent() {
     if (!protocol_) {
         return;
+    }
+
+    if (sd_music_active_.load()) {
+        ESP_LOGI(TAG, "Wake word detected while SD music is playing, stopping music first");
+        StopSdCardMusic();
+        vTaskDelay(pdMS_TO_TICKS(60));
     }
 
     auto state = GetDeviceState();
@@ -1116,6 +1395,225 @@ void Application::SetAecMode(AecMode mode) {
 
 void Application::PlaySound(const std::string_view& sound) {
     audio_service_.PlaySound(sound);
+}
+
+bool Application::PlaySdCardMusicByMood(const std::string& mood_or_emotion) {
+    std::string folder = ResolveSdMusicFolder(mood_or_emotion);
+    if (folder.empty()) {
+        return false;
+    }
+
+    // Prevent too-frequent re-trigger when server sends many same emotions continuously.
+    static std::string s_last_folder;
+    static int64_t s_last_play_us = 0;
+    int64_t now_us = esp_timer_get_time();
+    if (s_last_folder == folder && (now_us - s_last_play_us) < 5000000) {
+        return false;
+    }
+
+    std::vector<std::string> candidates;
+    CollectAudioCandidatesFromFolder(folder, candidates);
+
+    if (candidates.empty()) {
+        ESP_LOGW(TAG, "No audio files in %s", folder.c_str());
+        return false;
+    }
+
+    size_t index = esp_random() % candidates.size();
+
+    ESP_LOGI(TAG, "Play SD music: %s", candidates[index].c_str());
+
+    {
+        std::lock_guard<std::mutex> lock(sd_music_mutex_);
+        sd_music_playlist_ = candidates;
+        sd_music_index_ = static_cast<int>(index);
+        sd_music_autoplay_next_ = true;
+        sd_music_shuffle_mode_ = true;
+    }
+    if (!StartSdMusicPlaybackPath(candidates[index])) {
+        return false;
+    }
+
+    s_last_folder = folder;
+    s_last_play_us = now_us;
+    return true;
+}
+
+bool Application::PlaySdCardMusicByQuery(const std::string& query, const std::string& mood_hint) {
+    auto folders = ResolveSdMusicSearchFolders(mood_hint);
+    std::vector<std::string> candidates;
+    for (const auto& folder : folders) {
+        CollectAudioCandidatesFromFolder(folder, candidates);
+    }
+    if (candidates.empty()) {
+        ESP_LOGW(TAG, "No SD music candidates found");
+        return false;
+    }
+
+    int best_score = -1;
+    std::string best_path;
+    for (const auto& path : candidates) {
+        std::string name = BaseNameFromPath(path);
+        int score = MatchScoreAdvanced(name, query);
+        if (score > best_score) {
+            best_score = score;
+            best_path = path;
+        }
+    }
+
+    if (best_score <= 0 || best_path.empty()) {
+        ESP_LOGW(TAG, "No SD music match for query: %s", query.c_str());
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Play SD music by query '%s': %s", query.c_str(), best_path.c_str());
+
+    {
+        std::lock_guard<std::mutex> lock(sd_music_mutex_);
+        sd_music_playlist_ = candidates;
+        sd_music_index_ = -1;
+        sd_music_autoplay_next_ = false;
+        sd_music_shuffle_mode_ = false;
+        for (size_t i = 0; i < sd_music_playlist_.size(); ++i) {
+            if (sd_music_playlist_[i] == best_path) {
+                sd_music_index_ = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+    return StartSdMusicPlaybackPath(best_path);
+}
+
+bool Application::StartSdMusicPlaybackLocked(const std::string& path) {
+    // Stop current playback first
+    sd_music_stop_requested_ = true;
+    audio_service_.RequestPlaybackStop();
+
+    if (sd_music_task_handle_ != nullptr) {
+        // Existing task is stopping; continue and start a new one anyway.
+        // Decoder stop flag ensures old task exits soon.
+    }
+
+    sd_music_stop_requested_ = false;
+    audio_service_.ClearPlaybackStopRequest();
+    sd_music_active_.store(true);
+
+    struct SdMusicTaskArg {
+        std::string path;
+        uint32_t generation;
+    };
+
+    uint32_t generation = ++sd_music_generation_;
+    auto* task_arg = new (std::nothrow) SdMusicTaskArg{path, generation};
+    if (task_arg == nullptr) {
+        ESP_LOGE(TAG, "No memory for SD music task arg");
+        return false;
+    }
+
+    BaseType_t ok = xTaskCreate([](void* arg) {
+        std::unique_ptr<SdMusicTaskArg> task_arg_ptr(static_cast<SdMusicTaskArg*>(arg));
+        auto& app = Application::GetInstance();
+
+        bool played = false;
+        uint32_t generation = 0;
+        if (task_arg_ptr) {
+            generation = task_arg_ptr->generation;
+        }
+        if (task_arg_ptr && !task_arg_ptr->path.empty()) {
+            if (HasMp3Extension(task_arg_ptr->path)) {
+                played = app.GetAudioService().PlayMp3File(task_arg_ptr->path.c_str());
+            } else {
+                played = app.GetAudioService().PlayOggFile(task_arg_ptr->path.c_str());
+            }
+        }
+
+        app.Schedule([played, generation]() {
+            auto& self = Application::GetInstance();
+            bool stopped = false;
+            bool is_current = false;
+            bool should_autoplay_next = false;
+            std::string next_path;
+            {
+                std::lock_guard<std::mutex> lock(self.sd_music_mutex_);
+                stopped = self.sd_music_stop_requested_;
+                is_current = (generation == self.sd_music_generation_);
+                if (is_current) {
+                    self.sd_music_task_handle_ = nullptr;
+                    self.sd_music_active_.store(false);
+
+                    if (!stopped && played && self.sd_music_autoplay_next_ && !self.sd_music_playlist_.empty()) {
+                        if (self.sd_music_shuffle_mode_) {
+                            self.sd_music_index_ = static_cast<int>(esp_random() % self.sd_music_playlist_.size());
+                        } else {
+                            if (self.sd_music_index_ < 0) {
+                                self.sd_music_index_ = 0;
+                            } else {
+                                self.sd_music_index_ = (self.sd_music_index_ + 1) % static_cast<int>(self.sd_music_playlist_.size());
+                            }
+                        }
+                        next_path = self.sd_music_playlist_[self.sd_music_index_];
+                        should_autoplay_next = true;
+                    }
+                }
+            }
+
+            if (is_current && should_autoplay_next) {
+                ESP_LOGI(TAG, "SD autoplay next: %s", next_path.c_str());
+                if (!self.StartSdMusicPlaybackPath(next_path)) {
+                    auto display = Board::GetInstance().GetDisplay();
+                    display->SetChatMessage("assistant", "Mình chưa chuyển được bài tiếp theo. Bạn thử yêu cầu lại nhé.");
+                }
+                return;
+            }
+
+            if (is_current && !stopped) {
+                auto display = Board::GetInstance().GetDisplay();
+                if (played) {
+                    display->SetChatMessage("assistant", "Mình đã phát xong bài này. Bạn muốn nghe bài khác không?");
+                } else {
+                    display->SetChatMessage("assistant", "Mình chưa phát được bài này. Bạn muốn chọn bài khác không?");
+                }
+            }
+        });
+
+        vTaskDelete(nullptr);
+    }, "sd_music", 4096 * 3, task_arg, 3, &sd_music_task_handle_);
+
+    if (ok != pdPASS) {
+        delete task_arg;
+        sd_music_task_handle_ = nullptr;
+        sd_music_active_.store(false);
+        ESP_LOGE(TAG, "Failed to create SD music task");
+        return false;
+    }
+    return true;
+}
+
+bool Application::StartSdMusicPlaybackPath(const std::string& path) {
+    std::lock_guard<std::mutex> lock(sd_music_mutex_);
+    return StartSdMusicPlaybackLocked(path);
+}
+
+bool Application::StopSdCardMusic() {
+    std::lock_guard<std::mutex> lock(sd_music_mutex_);
+    sd_music_stop_requested_ = true;
+    sd_music_autoplay_next_ = false;
+    sd_music_active_.store(false);
+    audio_service_.RequestPlaybackStop();
+    return true;
+}
+
+bool Application::PlayNextSdCardMusic() {
+    std::lock_guard<std::mutex> lock(sd_music_mutex_);
+    if (sd_music_playlist_.empty()) {
+        return false;
+    }
+    if (sd_music_index_ < 0) {
+        sd_music_index_ = 0;
+    } else {
+        sd_music_index_ = (sd_music_index_ + 1) % static_cast<int>(sd_music_playlist_.size());
+    }
+    return StartSdMusicPlaybackLocked(sd_music_playlist_[sd_music_index_]);
 }
 
 void Application::ResetProtocol() {

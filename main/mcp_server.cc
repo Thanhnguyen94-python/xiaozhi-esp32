@@ -7,7 +7,10 @@
 #include <esp_log.h>
 #include <esp_app_desc.h>
 #include <algorithm>
+#include <cctype>
 #include <cstring>
+#include <vector>
+#include <dirent.h>
 #include <esp_pthread.h>
 
 #include "application.h"
@@ -19,6 +22,49 @@
 #include "lvgl_display.h"
 
 #define TAG "MCP"
+
+namespace {
+
+bool EndsWithIgnoreCase(const std::string& s, const char* ext) {
+    if (ext == nullptr) {
+        return false;
+    }
+    std::string lower = s;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    std::string e(ext);
+    std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    if (lower.size() < e.size()) {
+        return false;
+    }
+    return lower.compare(lower.size() - e.size(), e.size(), e) == 0;
+}
+
+void AppendMusicListFromFolder(const char* folder, std::vector<std::string>& out) {
+    if (folder == nullptr) {
+        return;
+    }
+    DIR* dir = opendir(folder);
+    if (dir == nullptr) {
+        return;
+    }
+    struct dirent* entry = nullptr;
+    while ((entry = readdir(dir)) != nullptr) {
+        if (entry->d_name[0] == '.') {
+            continue;
+        }
+        std::string name(entry->d_name);
+        if (EndsWithIgnoreCase(name, ".mp3") || EndsWithIgnoreCase(name, ".ogg")) {
+            out.push_back(name);
+        }
+    }
+    closedir(dir);
+}
+
+} // namespace
 
 McpServer::McpServer() {
 }
@@ -61,6 +107,98 @@ void McpServer::AddCommonTools() {
             auto codec = board.GetAudioCodec();
             codec->SetOutputVolume(properties["volume"].value<int>());
             return true;
+        });
+
+    AddTool("self.audio_speaker.play_sd_music",
+        "Play a random music file (MP3/OGG) from SD card folder by mood. Supported mood values: `vuive` or `buon`. "
+        "It also accepts related emotions like `happy`, `excited`, `sad`, `angry`.",
+        PropertyList({
+            Property("mood", kPropertyTypeString)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto mood = properties["mood"].value<std::string>();
+            bool ok = Application::GetInstance().PlaySdCardMusicByMood(mood);
+            if (!ok) {
+                return std::string("Failed to play SD music. Check SD mount and folders: /sdcard/music/vuive or /sdcard/music/buon");
+            }
+            return std::string("Mình đang phát nhạc từ thẻ nhớ. Bạn muốn dừng, đổi âm lượng hay chuyển bài tiếp không?");
+        });
+
+    AddTool("self.audio_speaker.search_and_play_sd_music",
+        "Search and play a music file from SD card by filename keyword. "
+        "Only use this when user explicitly asks to play music. "
+        "Args: `query` is required keyword; `mood` is optional (`vuive` or `buon`) to narrow search.",
+        PropertyList({
+            Property("query", kPropertyTypeString),
+            Property("mood", kPropertyTypeString, std::string(""))
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto query = properties["query"].value<std::string>();
+            auto mood = properties["mood"].value<std::string>();
+            if (query.empty()) {
+                return std::string("`query` is empty");
+            }
+            bool ok = Application::GetInstance().PlaySdCardMusicByQuery(query, mood);
+            if (!ok) {
+                return std::string("No matching music found in /sdcard/music/vuive or /sdcard/music/buon");
+            }
+            return std::string("Đã bắt đầu phát bài bạn yêu cầu. Bạn muốn nghe tiếp bài khác hoặc dừng nhạc không?");
+        });
+
+    AddTool("self.audio_speaker.stop_sd_music",
+        "Stop current SD music playback.",
+        PropertyList(),
+        [](const PropertyList&) -> ReturnValue {
+            Application::GetInstance().StopSdCardMusic();
+            return std::string("Đã dừng phát nhạc. Bạn muốn mình mở bài nào tiếp theo?");
+        });
+
+    AddTool("self.audio_speaker.next_sd_music",
+        "Play next music in the current SD music playlist context.",
+        PropertyList(),
+        [](const PropertyList&) -> ReturnValue {
+            bool ok = Application::GetInstance().PlayNextSdCardMusic();
+            if (!ok) {
+                return std::string("Chưa có danh sách bài hiện tại để chuyển tiếp. Bạn hãy yêu cầu phát bài trước nhé.");
+            }
+            return std::string("Đã chuyển sang bài tiếp theo. Bạn muốn tăng giảm âm lượng không?");
+        });
+
+    AddTool("self.audio_speaker.list_sd_music",
+        "List available music files from SD card folders. Optional mood: `vuive` or `buon`.",
+        PropertyList({
+            Property("mood", kPropertyTypeString, std::string(""))
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto mood = properties["mood"].value<std::string>();
+            std::vector<std::string> files;
+            if (mood == "vuive") {
+                AppendMusicListFromFolder("/sdcard/music/vuive", files);
+            } else if (mood == "buon") {
+                AppendMusicListFromFolder("/sdcard/music/buon", files);
+            } else {
+                AppendMusicListFromFolder("/sdcard/music/vuive", files);
+                AppendMusicListFromFolder("/sdcard/music/buon", files);
+            }
+
+            if (files.empty()) {
+                return std::string("Không tìm thấy bài nhạc nào trong thẻ nhớ.");
+            }
+
+            std::sort(files.begin(), files.end());
+            if (files.size() > 30) {
+                files.resize(30);
+            }
+
+            std::string out = "Danh sách nhạc hiện có: ";
+            for (size_t i = 0; i < files.size(); ++i) {
+                out += files[i];
+                if (i + 1 < files.size()) {
+                    out += ", ";
+                }
+            }
+            out += ". Bạn muốn phát bài nào?";
+            return out;
         });
     
     auto backlight = board.GetBacklight();

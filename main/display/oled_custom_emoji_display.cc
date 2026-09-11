@@ -28,10 +28,11 @@ lv_image_dsc_t MakeMonoBitmap(const uint8_t* data, uint32_t size, uint16_t w, ui
 
 constexpr uint32_t kI1PaletteBytes = sizeof(lv_color32_t) * 2;
 constexpr uint32_t kHappyLvglDataSize = kI1PaletteBytes + robot_face::kHappyBitmapDataSize;
-uint8_t gHappyBitmap1Lvgl[kHappyLvglDataSize];
-uint8_t gHappyBitmap2Lvgl[kHappyLvglDataSize];
-lv_image_dsc_t kHappyBitmap1 = {};
-lv_image_dsc_t kHappyBitmap2 = {};
+
+constexpr uint32_t kHappyFrameCount = robot_face::kHappyFrameCount;
+uint8_t gHappyBitmapsLvgl[kHappyFrameCount][kHappyLvglDataSize];
+lv_image_dsc_t kHappyBitmaps[kHappyFrameCount];
+
 bool gHappyBitmapReady = false;
 
 void EnsureHappyBitmapReady() {
@@ -51,18 +52,29 @@ void EnsureHappyBitmapReady() {
     black.blue = 0x00;
     black.alpha = 0xFF;
 
-    std::memcpy(gHappyBitmap1Lvgl, &white, sizeof(lv_color32_t));
-    std::memcpy(gHappyBitmap1Lvgl + sizeof(lv_color32_t), &black, sizeof(lv_color32_t));
-    std::memcpy(gHappyBitmap1Lvgl + kI1PaletteBytes, robot_face::Fr2_GIF1, robot_face::kHappyBitmapDataSize);
+    // Mảng con trỏ tới dữ liệu bitmap gốc
+    const uint8_t* frameData[] = {
+        robot_face::Fr2_GIF1,
+        robot_face::Fr2_GIF2,
+        robot_face::Fr2_GIF3,   // nếu có
+        // robot_face::Fr2_GIF4    // nếu có
+    };
+    // Chỉ lấy số lượng thực tế (kHappyFrameCount)
+    // Lưu ý: phải đảm bảo mảng này có đủ phần tử
 
-    std::memcpy(gHappyBitmap2Lvgl, &white, sizeof(lv_color32_t));
-    std::memcpy(gHappyBitmap2Lvgl + sizeof(lv_color32_t), &black, sizeof(lv_color32_t));
-    std::memcpy(gHappyBitmap2Lvgl + kI1PaletteBytes, robot_face::Fr2_GIF2, robot_face::kHappyBitmapDataSize);
+    for (uint32_t i = 0; i < kHappyFrameCount; ++i) {
+        // Chép palette (2 màu)
+        std::memcpy(gHappyBitmapsLvgl[i], &white, sizeof(lv_color32_t));
+        std::memcpy(gHappyBitmapsLvgl[i] + sizeof(lv_color32_t), &black, sizeof(lv_color32_t));
+        // Chép dữ liệu bitmap
+        std::memcpy(gHappyBitmapsLvgl[i] + kI1PaletteBytes, frameData[i], robot_face::kHappyBitmapDataSize);
 
-    kHappyBitmap1 = MakeMonoBitmap(gHappyBitmap1Lvgl, kHappyLvglDataSize,
-        robot_face::kHappyBitmapWidth, robot_face::kHappyBitmapHeight);
-    kHappyBitmap2 = MakeMonoBitmap(gHappyBitmap2Lvgl, kHappyLvglDataSize,
-        robot_face::kHappyBitmapWidth, robot_face::kHappyBitmapHeight);
+        // Tạo image descriptor
+        kHappyBitmaps[i] = MakeMonoBitmap(gHappyBitmapsLvgl[i], kHappyLvglDataSize,
+                                          robot_face::kHappyBitmapWidth,
+                                          robot_face::kHappyBitmapHeight);
+    }
+
     gHappyBitmapReady = true;
 }
 }
@@ -309,9 +321,15 @@ void OledCustomEmojiDisplay::AnimateFaceTick() {
         need_render = true;
     }
 
+    static int happy_skip_counter = 0;
+
     if (std::strcmp(current_face_emotion_, "happy") == 0 && height_ == 64) {
-        happy_frame_ = (happy_frame_ + 1) % 2;
-        need_render = true;
+        happy_skip_counter++;
+        if (happy_skip_counter >= 5) { // Chỉ cập nhật khung happy mỗi 3 tick (~240ms)
+            happy_skip_counter = 0;
+            happy_frame_ = (happy_frame_ + 1) % kHappyFrameCount;
+            need_render = true;
+        }
     }
 
     if (need_render) {
@@ -337,7 +355,8 @@ void OledCustomEmojiDisplay::RenderFace() {
             lv_obj_add_flag(right_pupil_, LV_OBJ_FLAG_HIDDEN);
         }
 
-        lv_image_set_src(happy_bitmap_, (happy_frame_ == 0) ? &kHappyBitmap1 : &kHappyBitmap2);
+        // lv_image_set_src(happy_bitmap_, (happy_frame_ == 0) ? &kHappyBitmap1 : &kHappyBitmap2);
+        lv_image_set_src(happy_bitmap_, &kHappyBitmaps[happy_frame_ % kHappyFrameCount]);
         lv_obj_clear_flag(happy_bitmap_, LV_OBJ_FLAG_HIDDEN);
         return;
     }

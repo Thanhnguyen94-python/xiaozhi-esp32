@@ -1,6 +1,10 @@
 #include "audio_service.h"
 #include <esp_log.h>
 #include <cstring>
+#include <cstdio>
+#include "esp_audio_dec_default.h"
+#include "esp_audio_simple_dec_default.h"
+#include "esp_audio_simple_dec.h"
 
 #define RATE_CVT_CFG(_src_rate, _dest_rate, _channel)        \
     (esp_ae_rate_cvt_cfg_t)                                  \
@@ -62,6 +66,11 @@ AudioService::~AudioService() {
 void AudioService::Initialize(AudioCodec* codec) {
     codec_ = codec;
     codec_->Start();
+
+    // Register default decoders (MP3/AAC/...) for simple decoder playback.
+    // Safe to call once during service initialization.
+    esp_audio_dec_register_default();
+    esp_audio_simple_dec_register_default();
 
     esp_opus_dec_cfg_t opus_dec_cfg = OPUS_DEC_CFG(codec->output_sample_rate(), OPUS_FRAME_DURATION_MS);
     auto ret = esp_opus_dec_open(&opus_dec_cfg, sizeof(esp_opus_dec_cfg_t), &opus_decoder_);
@@ -631,6 +640,7 @@ void AudioService::SetCallbacks(AudioServiceCallbacks& callbacks) {
 }
 
 void AudioService::PlaySound(const std::string_view& ogg) {
+    stop_playback_requested_.store(false);
     if (!codec_->output_enabled()) {
         esp_timer_stop(audio_power_timer_);
         esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
@@ -642,6 +652,9 @@ void AudioService::PlaySound(const std::string_view& ogg) {
 
     auto demuxer = std::make_unique<OggDemuxer>();
     demuxer->OnDemuxerFinished([this](const uint8_t* data, int sample_rate, size_t size){
+        if (stop_playback_requested_.load()) {
+            return;
+        }
         auto packet = std::make_unique<AudioStreamPacket>();
         packet->sample_rate = sample_rate;
         packet->frame_duration = 60;
@@ -651,6 +664,417 @@ void AudioService::PlaySound(const std::string_view& ogg) {
     });
     demuxer->Reset();
     demuxer->Process(buf, size);
+}
+
+bool AudioService::PlayMp3(const std::string_view& mp3) {
+    stop_playback_requested_.store(false);
+    if (mp3.empty()) {
+        return false;
+    }
+
+    if (!codec_->output_enabled()) {
+        esp_timer_stop(audio_power_timer_);
+        esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+        codec_->EnableOutput(true);
+    }
+
+    esp_audio_simple_dec_cfg_t dec_cfg = {
+        .dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_MP3,
+        .dec_cfg = nullptr,
+        .cfg_size = 0,
+        .use_frame_dec = false,
+    };
+
+    esp_audio_simple_dec_handle_t decoder = nullptr;
+    auto ret = esp_audio_simple_dec_open(&dec_cfg, &decoder);
+    if (ret != ESP_AUDIO_ERR_OK || decoder == nullptr) {
+        ESP_LOGE(TAG, "Failed to open MP3 decoder: %d", ret);
+        return false;
+    }
+
+    esp_ae_rate_cvt_handle_t mp3_resampler = nullptr;
+    bool ok = true;
+    bool info_ready = false;
+    uint32_t src_sample_rate = 0;
+    uint8_t src_channels = 1;
+
+    std::vector<uint8_t> decode_buf(4096);
+    const uint8_t* in_ptr = reinterpret_cast<const uint8_t*>(mp3.data());
+    size_t in_size = mp3.size();
+    size_t in_pos = 0;
+
+    while (in_pos < in_size && ok) {
+        if (stop_playback_requested_.load()) {
+            break;
+        }
+        size_t block = in_size - in_pos;
+        if (block > 4096) {
+            block = 4096;
+        }
+
+        esp_audio_simple_dec_raw_t raw = {
+            .buffer = const_cast<uint8_t*>(in_ptr + in_pos),
+            .len = static_cast<uint32_t>(block),
+            .eos = false,
+            .consumed = 0,
+            .frame_recover = ESP_AUDIO_SIMPLE_DEC_RECOVERY_NONE,
+        };
+        in_pos += block;
+
+        while (raw.len > 0) {
+            if (stop_playback_requested_.load()) {
+                break;
+            }
+            esp_audio_simple_dec_out_t out = {
+                .buffer = decode_buf.data(),
+                .len = static_cast<uint32_t>(decode_buf.size()),
+                .needed_size = 0,
+                .decoded_size = 0,
+            };
+
+            ret = esp_audio_simple_dec_process(decoder, &raw, &out);
+            if (ret == ESP_AUDIO_ERR_BUFF_NOT_ENOUGH) {
+                if (out.needed_size == 0) {
+                    ok = false;
+                    break;
+                }
+                decode_buf.resize(out.needed_size);
+                continue;
+            }
+            if (ret != ESP_AUDIO_ERR_OK) {
+                ESP_LOGE(TAG, "MP3 decode failed: %d", ret);
+                ok = false;
+                break;
+            }
+
+            if (raw.consumed > raw.len) {
+                ESP_LOGE(TAG, "MP3 parser consumed invalid bytes: %u > %u", raw.consumed, raw.len);
+                ok = false;
+                break;
+            }
+
+            raw.buffer += raw.consumed;
+            raw.len -= raw.consumed;
+
+            if (out.decoded_size == 0) {
+                continue;
+            }
+
+            if (!info_ready) {
+                esp_audio_simple_dec_info_t info = {};
+                if (esp_audio_simple_dec_get_info(decoder, &info) == ESP_AUDIO_ERR_OK) {
+                    src_sample_rate = info.sample_rate;
+                    src_channels = info.channel;
+                    if (info.bits_per_sample != 16) {
+                        ESP_LOGE(TAG, "Unsupported MP3 bits_per_sample: %u", info.bits_per_sample);
+                        ok = false;
+                        break;
+                    }
+                    if (src_channels != 1 && src_channels != 2) {
+                        ESP_LOGE(TAG, "Unsupported MP3 channels: %u", src_channels);
+                        ok = false;
+                        break;
+                    }
+
+                    if (src_sample_rate != static_cast<uint32_t>(codec_->output_sample_rate())) {
+                        esp_ae_rate_cvt_cfg_t cfg = RATE_CVT_CFG(src_sample_rate, codec_->output_sample_rate(), ESP_AUDIO_MONO);
+                        auto res_ret = esp_ae_rate_cvt_open(&cfg, &mp3_resampler);
+                        if (mp3_resampler == nullptr) {
+                            ESP_LOGE(TAG, "Failed to create MP3 resampler: %d", res_ret);
+                            ok = false;
+                            break;
+                        }
+                    }
+                    info_ready = true;
+                }
+            }
+
+            std::vector<int16_t> mono_pcm;
+            auto* pcm = reinterpret_cast<const int16_t*>(out.buffer);
+            size_t total_samples = out.decoded_size / sizeof(int16_t);
+
+            if (src_channels == 2) {
+                size_t frames = total_samples / 2;
+                mono_pcm.resize(frames);
+                for (size_t i = 0; i < frames; ++i) {
+                    int32_t l = pcm[i * 2];
+                    int32_t r = pcm[i * 2 + 1];
+                    mono_pcm[i] = static_cast<int16_t>((l + r) / 2);
+                }
+            } else {
+                mono_pcm.assign(pcm, pcm + total_samples);
+            }
+
+            if (mp3_resampler != nullptr) {
+                uint32_t max_out = 0;
+                esp_ae_rate_cvt_get_max_out_sample_num(mp3_resampler, mono_pcm.size(), &max_out);
+                std::vector<int16_t> out_pcm(max_out);
+                uint32_t actual_out = max_out;
+                esp_ae_rate_cvt_process(mp3_resampler,
+                                        reinterpret_cast<esp_ae_sample_t>(mono_pcm.data()),
+                                        mono_pcm.size(),
+                                        reinterpret_cast<esp_ae_sample_t>(out_pcm.data()),
+                                        &actual_out);
+                out_pcm.resize(actual_out);
+                codec_->OutputData(out_pcm);
+            } else {
+                codec_->OutputData(mono_pcm);
+            }
+
+            last_output_time_ = std::chrono::steady_clock::now();
+        }
+    }
+
+    if (mp3_resampler != nullptr) {
+        esp_ae_rate_cvt_close(mp3_resampler);
+    }
+    esp_audio_simple_dec_close(decoder);
+    return ok;
+}
+
+bool AudioService::PlayOggFile(const char* path) {
+    if (path == nullptr || path[0] == '\0') {
+        return false;
+    }
+
+    FILE* fp = fopen(path, "rb");
+    if (fp == nullptr) {
+        ESP_LOGW(TAG, "Failed to open OGG file: %s", path);
+        return false;
+    }
+
+    stop_playback_requested_.store(false);
+
+    if (!codec_->output_enabled()) {
+        esp_timer_stop(audio_power_timer_);
+        esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+        codec_->EnableOutput(true);
+    }
+
+    std::vector<uint8_t> chunk(2048);
+    auto demuxer = std::make_unique<OggDemuxer>();
+    demuxer->OnDemuxerFinished([this](const uint8_t* data, int sample_rate, size_t size){
+        if (stop_playback_requested_.load()) {
+            return;
+        }
+        auto packet = std::make_unique<AudioStreamPacket>();
+        packet->sample_rate = sample_rate;
+        packet->frame_duration = 60;
+        packet->payload.resize(size);
+        std::memcpy(packet->payload.data(), data, size);
+        PushPacketToDecodeQueue(std::move(packet), true);
+    });
+    demuxer->Reset();
+
+    while (true) {
+        if (stop_playback_requested_.load()) {
+            break;
+        }
+        size_t n = fread(chunk.data(), 1, chunk.size(), fp);
+        if (n > 0) {
+            demuxer->Process(chunk.data(), n);
+        }
+        if (n < chunk.size()) {
+            if (feof(fp)) {
+                break;
+            }
+            if (ferror(fp)) {
+                ESP_LOGE(TAG, "Read OGG file failed: %s", path);
+                fclose(fp);
+                return false;
+            }
+        }
+    }
+
+    fclose(fp);
+    return true;
+}
+
+bool AudioService::PlayMp3File(const char* path) {
+    if (path == nullptr || path[0] == '\0') {
+        return false;
+    }
+
+    FILE* fp = fopen(path, "rb");
+    if (fp == nullptr) {
+        ESP_LOGW(TAG, "Failed to open MP3 file: %s", path);
+        return false;
+    }
+
+    stop_playback_requested_.store(false);
+
+    if (!codec_->output_enabled()) {
+        esp_timer_stop(audio_power_timer_);
+        esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+        codec_->EnableOutput(true);
+    }
+
+    esp_audio_simple_dec_cfg_t dec_cfg = {
+        .dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_MP3,
+        .dec_cfg = nullptr,
+        .cfg_size = 0,
+        .use_frame_dec = false,
+    };
+
+    esp_audio_simple_dec_handle_t decoder = nullptr;
+    auto ret = esp_audio_simple_dec_open(&dec_cfg, &decoder);
+    if (ret != ESP_AUDIO_ERR_OK || decoder == nullptr) {
+        ESP_LOGE(TAG, "Failed to open MP3 decoder: %d", ret);
+        fclose(fp);
+        return false;
+    }
+
+    esp_ae_rate_cvt_handle_t mp3_resampler = nullptr;
+    bool ok = true;
+    bool info_ready = false;
+    uint8_t src_channels = 1;
+
+    std::vector<uint8_t> in_buf(2048);
+    std::vector<uint8_t> decode_buf(4096);
+
+    while (ok) {
+        if (stop_playback_requested_.load()) {
+            break;
+        }
+        size_t n = fread(in_buf.data(), 1, in_buf.size(), fp);
+        if (n == 0) {
+            if (feof(fp)) {
+                break;
+            }
+            if (ferror(fp)) {
+                ESP_LOGE(TAG, "Read MP3 file failed: %s", path);
+                ok = false;
+            }
+            break;
+        }
+
+        esp_audio_simple_dec_raw_t raw = {
+            .buffer = in_buf.data(),
+            .len = static_cast<uint32_t>(n),
+            .eos = false,
+            .consumed = 0,
+            .frame_recover = ESP_AUDIO_SIMPLE_DEC_RECOVERY_NONE,
+        };
+
+        while (raw.len > 0 && ok) {
+            if (stop_playback_requested_.load()) {
+                break;
+            }
+            esp_audio_simple_dec_out_t out = {
+                .buffer = decode_buf.data(),
+                .len = static_cast<uint32_t>(decode_buf.size()),
+                .needed_size = 0,
+                .decoded_size = 0,
+            };
+
+            ret = esp_audio_simple_dec_process(decoder, &raw, &out);
+            if (ret == ESP_AUDIO_ERR_BUFF_NOT_ENOUGH) {
+                if (out.needed_size == 0 || out.needed_size > 64 * 1024) {
+                    ESP_LOGE(TAG, "Invalid MP3 out buffer size request: %u", out.needed_size);
+                    ok = false;
+                    break;
+                }
+                decode_buf.resize(out.needed_size);
+                continue;
+            }
+            if (ret != ESP_AUDIO_ERR_OK) {
+                ESP_LOGE(TAG, "MP3 decode failed: %d", ret);
+                ok = false;
+                break;
+            }
+
+            if (raw.consumed > raw.len) {
+                ESP_LOGE(TAG, "MP3 parser consumed invalid bytes: %u > %u", raw.consumed, raw.len);
+                ok = false;
+                break;
+            }
+
+            raw.buffer += raw.consumed;
+            raw.len -= raw.consumed;
+
+            if (out.decoded_size == 0) {
+                continue;
+            }
+
+            if (!info_ready) {
+                esp_audio_simple_dec_info_t info = {};
+                if (esp_audio_simple_dec_get_info(decoder, &info) == ESP_AUDIO_ERR_OK) {
+                    if (info.bits_per_sample != 16) {
+                        ESP_LOGE(TAG, "Unsupported MP3 bits_per_sample: %u", info.bits_per_sample);
+                        ok = false;
+                        break;
+                    }
+                    src_channels = info.channel;
+                    if (src_channels != 1 && src_channels != 2) {
+                        ESP_LOGE(TAG, "Unsupported MP3 channels: %u", src_channels);
+                        ok = false;
+                        break;
+                    }
+
+                    if (info.sample_rate != static_cast<uint32_t>(codec_->output_sample_rate())) {
+                        esp_ae_rate_cvt_cfg_t cfg = RATE_CVT_CFG(info.sample_rate, codec_->output_sample_rate(), ESP_AUDIO_MONO);
+                        auto res_ret = esp_ae_rate_cvt_open(&cfg, &mp3_resampler);
+                        if (mp3_resampler == nullptr) {
+                            ESP_LOGE(TAG, "Failed to create MP3 resampler: %d", res_ret);
+                            ok = false;
+                            break;
+                        }
+                    }
+                    info_ready = true;
+                }
+            }
+
+            auto* pcm = reinterpret_cast<const int16_t*>(out.buffer);
+            size_t total_samples = out.decoded_size / sizeof(int16_t);
+
+            std::vector<int16_t> mono_pcm;
+            if (src_channels == 2) {
+                size_t frames = total_samples / 2;
+                mono_pcm.resize(frames);
+                for (size_t i = 0; i < frames; ++i) {
+                    int32_t l = pcm[i * 2];
+                    int32_t r = pcm[i * 2 + 1];
+                    mono_pcm[i] = static_cast<int16_t>((l + r) / 2);
+                }
+            } else {
+                mono_pcm.assign(pcm, pcm + total_samples);
+            }
+
+            if (mp3_resampler != nullptr) {
+                uint32_t max_out = 0;
+                esp_ae_rate_cvt_get_max_out_sample_num(mp3_resampler, mono_pcm.size(), &max_out);
+                std::vector<int16_t> out_pcm(max_out);
+                uint32_t actual_out = max_out;
+                esp_ae_rate_cvt_process(mp3_resampler,
+                                        reinterpret_cast<esp_ae_sample_t>(mono_pcm.data()),
+                                        mono_pcm.size(),
+                                        reinterpret_cast<esp_ae_sample_t>(out_pcm.data()),
+                                        &actual_out);
+                out_pcm.resize(actual_out);
+                codec_->OutputData(out_pcm);
+            } else {
+                codec_->OutputData(mono_pcm);
+            }
+
+            last_output_time_ = std::chrono::steady_clock::now();
+        }
+    }
+
+    if (mp3_resampler != nullptr) {
+        esp_ae_rate_cvt_close(mp3_resampler);
+    }
+    esp_audio_simple_dec_close(decoder);
+    fclose(fp);
+    return ok;
+}
+
+void AudioService::RequestPlaybackStop() {
+    stop_playback_requested_.store(true);
+    ResetDecoder();
+}
+
+void AudioService::ClearPlaybackStopRequest() {
+    stop_playback_requested_.store(false);
 }
 
 bool AudioService::IsIdle() {

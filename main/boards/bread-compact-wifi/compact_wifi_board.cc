@@ -14,6 +14,9 @@
 #include <driver/i2c_master.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
+#include <esp_vfs_fat.h>
+#include <sdmmc_cmd.h>
+#include <driver/sdspi_host.h>
 
 #ifdef SH1106
 #include <esp_lcd_panel_sh1106.h>
@@ -31,6 +34,7 @@ private:
     Button touch_button_;
     Button volume_up_button_;
     Button volume_down_button_;
+    bool sdcard_mounted_ = false;
 
     void InitializeDisplayI2c() {
         i2c_master_bus_config_t bus_config = {
@@ -144,6 +148,73 @@ private:
         });
     }
 
+    void InitializeSdCard() {
+        sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+        host.max_freq_khz = SDCARD_SPI_MAX_FREQ_KHZ;
+
+        spi_bus_config_t bus_cfg = {
+            .mosi_io_num = SDCARD_SPI_MOSI,
+            .miso_io_num = SDCARD_SPI_MISO,
+            .sclk_io_num = SDCARD_SPI_SCLK,
+            .quadwp_io_num = GPIO_NUM_NC,
+            .quadhd_io_num = GPIO_NUM_NC,
+            .max_transfer_sz = 4000,
+        };
+
+        esp_err_t ret = spi_bus_initialize((spi_host_device_t)host.slot, &bus_cfg, SPI_DMA_CH_AUTO);
+        if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(TAG, "Failed to initialize SD SPI bus: %s", esp_err_to_name(ret));
+            return;
+        }
+
+        // SDSPI often needs pull-up on lines (especially MISO and CS).
+        gpio_set_pull_mode(SDCARD_SPI_MISO, GPIO_PULLUP_ONLY);
+        gpio_set_pull_mode(SDCARD_SPI_MOSI, GPIO_PULLUP_ONLY);
+        gpio_set_pull_mode(SDCARD_SPI_SCLK, GPIO_PULLUP_ONLY);
+        gpio_set_pull_mode(SDCARD_SPI_CS, GPIO_PULLUP_ONLY);
+
+        esp_vfs_fat_sdmmc_mount_config_t mount_cfg = {
+            .format_if_mount_failed = false,
+            .max_files = 5,
+            .allocation_unit_size = 0,
+            .disk_status_check_enable = true,
+        };
+
+        // Try a few combinations to avoid common timeout issues caused by CS pin mismatch
+        // or unstable wiring at high SPI frequency.
+        const int cs_candidates[] = { static_cast<int>(SDCARD_SPI_CS), 21 };
+        const int freq_candidates[] = { SDCARD_SPI_MAX_FREQ_KHZ, 1000, 400 };
+        sdmmc_card_t* card = nullptr;
+
+        for (int cs : cs_candidates) {
+            for (int freq_khz : freq_candidates) {
+                host.max_freq_khz = freq_khz;
+
+                sdspi_device_config_t slot_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
+                slot_cfg.host_id = (spi_host_device_t)host.slot;
+                slot_cfg.gpio_cs = static_cast<gpio_num_t>(cs);
+
+                gpio_set_pull_mode(static_cast<gpio_num_t>(cs), GPIO_PULLUP_ONLY);
+                ESP_LOGI(TAG, "Try mount SD: CS=%d, freq=%dkHz", cs, freq_khz);
+
+                ret = esp_vfs_fat_sdspi_mount(SDCARD_MOUNT_POINT, &host, &slot_cfg, &mount_cfg, &card);
+                if (ret == ESP_OK) {
+                    sdcard_mounted_ = true;
+                    sdmmc_card_print_info(stdout, card);
+                    ESP_LOGI(TAG, "SD card mounted at %s (CS=%d, freq=%dkHz)", SDCARD_MOUNT_POINT, cs, freq_khz);
+                    return;
+                }
+
+                ESP_LOGW(TAG, "Mount failed (CS=%d, freq=%dkHz): %s", cs, freq_khz, esp_err_to_name(ret));
+                vTaskDelay(pdMS_TO_TICKS(30));
+            }
+        }
+
+        ESP_LOGW(TAG, "Failed to mount SD card at %s after retries", SDCARD_MOUNT_POINT);
+        ESP_LOGW(TAG, "Check wiring: MISO=%d MOSI=%d SCLK=%d CS=%d, 3.3V power, FAT32 format",
+                 SDCARD_SPI_MISO, SDCARD_SPI_MOSI, SDCARD_SPI_SCLK, SDCARD_SPI_CS);
+    }
+
     // 物联网初始化，逐步迁移到 MCP 协议
     void InitializeTools() {
         static LampController lamp(LAMP_GPIO);
@@ -157,6 +228,7 @@ public:
         volume_down_button_(VOLUME_DOWN_BUTTON_GPIO) {
         InitializeDisplayI2c();
         InitializeSsd1306Display();
+        InitializeSdCard();
         InitializeButtons();
         InitializeTools();
     }
