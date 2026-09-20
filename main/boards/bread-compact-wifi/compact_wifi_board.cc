@@ -7,6 +7,7 @@
 #include "config.h"
 #include "mcp_server.h"
 #include "lamp_controller.h"
+#include "dual_servo_controller.h"
 #include "led/single_led.h"
 #include "assets/lang_config.h"
 
@@ -218,6 +219,26 @@ private:
     // 物联网初始化，逐步迁移到 MCP 协议
     void InitializeTools() {
         static LampController lamp(LAMP_GPIO);
+        // Legacy/compat namespace for body/leg movement tools.
+        static DualServoController leg_servo(
+            "leg",
+            "self.robot.dual_servo",
+            LEG_SERVO_PAN_GPIO,
+            LEG_SERVO_TILT_GPIO,
+            "/sdcard/robot/leg_servo_actions.json",
+            false);
+
+        // Dedicated head pan-tilt tools and emotion binding.
+        static DualServoController head_servo(
+            "head",
+            "self.robot.head_servo",
+            HEAD_SERVO_PAN_GPIO,
+            HEAD_SERVO_TILT_GPIO,
+            "/sdcard/robot/head_servo_actions.json",
+            true);
+
+        (void)leg_servo;
+        (void)head_servo;
     }
 
 public:

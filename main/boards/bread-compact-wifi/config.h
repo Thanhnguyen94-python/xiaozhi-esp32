@@ -66,4 +66,12 @@
 // A MCP Test: Control a lamp
 #define LAMP_GPIO GPIO_NUM_18
 
+// Leg servos (di chuyển robot)
+#define LEG_SERVO_PAN_GPIO   GPIO_NUM_9
+#define LEG_SERVO_TILT_GPIO  GPIO_NUM_11
+
+// Head servos (khớp cổ 2 trục pan-tilt)
+#define HEAD_SERVO_PAN_GPIO  GPIO_NUM_1
+#define HEAD_SERVO_TILT_GPIO GPIO_NUM_2
+
 #endif // _BOARD_CONFIG_H_
