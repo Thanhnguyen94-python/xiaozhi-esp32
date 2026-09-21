@@ -221,14 +221,13 @@ private:
     void InitializeTools() {
         static LampController lamp(LAMP_GPIO);
         // Wheel movement using 2 DC motors.
-        // Exposes both new namespace `self.robot.wheels.*`
-        // and compatibility namespace `self.robot.dual_servo.*`.
+        // Use dedicated namespace only to avoid affecting existing servo control flows.
         static DualDcMotorController wheel_motor(
             WHEEL_MOTOR_LEFT_IN1_GPIO,
             WHEEL_MOTOR_LEFT_IN2_GPIO,
             WHEEL_MOTOR_RIGHT_IN1_GPIO,
             WHEEL_MOTOR_RIGHT_IN2_GPIO,
-            {"self.robot.wheels", "self.robot.dual_servo"});
+            {"self.robot.wheels"});
 
         // Dedicated head pan-tilt tools and emotion binding.
         static DualServoController head_servo(

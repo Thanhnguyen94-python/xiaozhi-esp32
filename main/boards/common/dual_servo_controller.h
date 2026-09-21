@@ -410,6 +410,83 @@ private:
                 return std::string("OK");
             });
 
+        mcp_server.AddTool(BuildToolName("center"),
+            "Center pan-tilt servos to default neutral position.",
+            PropertyList(),
+            [this](const PropertyList&) -> ReturnValue {
+                if (!ready_) {
+                    return std::string("Dual servo is not ready. Check pins and power.");
+                }
+                std::lock_guard<std::mutex> lock(mutex_);
+                ++generation_;
+                WriteAnglesInternal(center_pan_, center_tilt_);
+                return std::string("OK");
+            });
+
+        mcp_server.AddTool(BuildToolName("look_left"),
+            "Rotate head to the left from center.",
+            PropertyList({
+                Property("delta", kPropertyTypeInteger, 5, 90)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                if (!ready_) {
+                    return std::string("Dual servo is not ready. Check pins and power.");
+                }
+                int delta = properties["delta"].value<int>();
+                std::lock_guard<std::mutex> lock(mutex_);
+                ++generation_;
+                WriteAnglesInternal(center_pan_ + delta, center_tilt_);
+                return std::string("OK");
+            });
+
+        mcp_server.AddTool(BuildToolName("look_right"),
+            "Rotate head to the right from center.",
+            PropertyList({
+                Property("delta", kPropertyTypeInteger, 5, 90)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                if (!ready_) {
+                    return std::string("Dual servo is not ready. Check pins and power.");
+                }
+                int delta = properties["delta"].value<int>();
+                std::lock_guard<std::mutex> lock(mutex_);
+                ++generation_;
+                WriteAnglesInternal(center_pan_ - delta, center_tilt_);
+                return std::string("OK");
+            });
+
+        mcp_server.AddTool(BuildToolName("look_up"),
+            "Tilt head up from center.",
+            PropertyList({
+                Property("delta", kPropertyTypeInteger, 5, 90)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                if (!ready_) {
+                    return std::string("Dual servo is not ready. Check pins and power.");
+                }
+                int delta = properties["delta"].value<int>();
+                std::lock_guard<std::mutex> lock(mutex_);
+                ++generation_;
+                WriteAnglesInternal(center_pan_, center_tilt_ - delta);
+                return std::string("OK");
+            });
+
+        mcp_server.AddTool(BuildToolName("look_down"),
+            "Tilt head down from center.",
+            PropertyList({
+                Property("delta", kPropertyTypeInteger, 5, 90)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                if (!ready_) {
+                    return std::string("Dual servo is not ready. Check pins and power.");
+                }
+                int delta = properties["delta"].value<int>();
+                std::lock_guard<std::mutex> lock(mutex_);
+                ++generation_;
+                WriteAnglesInternal(center_pan_, center_tilt_ + delta);
+                return std::string("OK");
+            });
+
         mcp_server.AddTool(BuildToolName("run_action"),
             "Run predefined pan-tilt actions by name: nodYes, shakeNo, talkingMotion, curiousHeadTilt, step_back, center.",
             PropertyList({

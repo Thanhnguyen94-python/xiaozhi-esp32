@@ -28,14 +28,7 @@ Namespace mới:
 - `self.robot.wheels.turn_right` (tham số `speed`)
 - `self.robot.wheels.stop`
 
-Namespace tương thích (giữ lệnh cũ theo tiền tố cũ):
-- `self.robot.dual_servo.get_state`
-- `self.robot.dual_servo.set_speed`
-- `self.robot.dual_servo.forward`
-- `self.robot.dual_servo.backward`
-- `self.robot.dual_servo.turn_left`
-- `self.robot.dual_servo.turn_right`
-- `self.robot.dual_servo.stop`
+Lưu ý: cụm bánh xe chỉ dùng namespace `self.robot.wheels.*` để tránh xung đột với các luồng servo cũ.
 
 ### 2.2 Cụm ĐẦU pan-tilt
 
@@ -45,6 +38,11 @@ Namespace tương thích (giữ lệnh cũ theo tiền tố cũ):
 - `self.robot.head_servo.talking_motion`
 - `self.robot.head_servo.curious_head_tilt`
 - `self.robot.head_servo.set_angles`
+- `self.robot.head_servo.center`
+- `self.robot.head_servo.look_left` (tham số `delta`)
+- `self.robot.head_servo.look_right` (tham số `delta`)
+- `self.robot.head_servo.look_up` (tham số `delta`)
+- `self.robot.head_servo.look_down` (tham số `delta`)
 - `self.robot.head_servo.run_action`
 - `self.robot.head_servo.stop`
 - `self.robot.head_servo.reload_config`
