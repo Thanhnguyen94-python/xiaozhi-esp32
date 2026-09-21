@@ -1,12 +1,12 @@
-# Điều khiển 2 servo Pan-Tilt cho ESP32-S3 bread-compact-wifi (OLED 0.96)
+# Điều khiển di chuyển bằng 2 động cơ DC + servo đầu Pan-Tilt cho ESP32-S3 bread-compact-wifi (OLED 0.96)
 
 Tài liệu này áp dụng cho board `bread-compact-wifi` (ESP32-S3) trong dự án này.
 
 ## 1) Tính năng đã thêm
 
-- Đã tách thành 2 cụm servo độc lập:
-  - Cụm CHÂN: GPIO9/GPIO11
-  - Cụm ĐẦU pan-tilt: GPIO1/GPIO2
+- Đã tách thành 2 cụm điều khiển độc lập:
+  - Cụm BÁNH XE (2 động cơ DC): IN1=GPIO9, IN2=GPIO8, IN3=GPIO11, IN4=GPIO17
+  - Cụm ĐẦU pan-tilt (servo): GPIO1/GPIO2
 - Các hàm cảm xúc mặc định đã có trong firmware:
   - `nodYes()`
   - `shakeNo()`
@@ -17,17 +17,25 @@ Tài liệu này áp dụng cho board `bread-compact-wifi` (ESP32-S3) trong dự
 
 ## 2) MCP tools để AI gọi bằng giọng nói
 
-### 2.1 Cụm CHÂN (giữ tương thích lệnh cũ)
+### 2.1 Cụm BÁNH XE (2 động cơ DC)
 
+Namespace mới:
+- `self.robot.wheels.get_state`
+- `self.robot.wheels.set_speed` (tham số `left`, `right`, khoảng -100..100)
+- `self.robot.wheels.forward` (tham số `speed`)
+- `self.robot.wheels.backward` (tham số `speed`)
+- `self.robot.wheels.turn_left` (tham số `speed`)
+- `self.robot.wheels.turn_right` (tham số `speed`)
+- `self.robot.wheels.stop`
+
+Namespace tương thích (giữ lệnh cũ theo tiền tố cũ):
 - `self.robot.dual_servo.get_state`
-- `self.robot.dual_servo.nod_yes`
-- `self.robot.dual_servo.shake_no`
-- `self.robot.dual_servo.talking_motion`
-- `self.robot.dual_servo.curious_head_tilt`
-- `self.robot.dual_servo.set_angles` (tham số `pan`, `tilt`)
-- `self.robot.dual_servo.run_action` (chạy theo tên action)
+- `self.robot.dual_servo.set_speed`
+- `self.robot.dual_servo.forward`
+- `self.robot.dual_servo.backward`
+- `self.robot.dual_servo.turn_left`
+- `self.robot.dual_servo.turn_right`
 - `self.robot.dual_servo.stop`
-- `self.robot.dual_servo.reload_config`
 
 ### 2.2 Cụm ĐẦU pan-tilt
 
@@ -45,7 +53,7 @@ Tài liệu này áp dụng cho board `bread-compact-wifi` (ESP32-S3) trong dự
 
 ### Chân mặc định trong code
 
-- Cụm chân: `LEG_SERVO_PAN_GPIO = GPIO9`, `LEG_SERVO_TILT_GPIO = GPIO11`
+- Cụm bánh xe: `WHEEL_MOTOR_LEFT_IN1_GPIO = GPIO9`, `WHEEL_MOTOR_LEFT_IN2_GPIO = GPIO8`, `WHEEL_MOTOR_RIGHT_IN1_GPIO = GPIO11`, `WHEEL_MOTOR_RIGHT_IN2_GPIO = GPIO17`
 - Cụm đầu: `HEAD_SERVO_PAN_GPIO = GPIO1`, `HEAD_SERVO_TILT_GPIO = GPIO2`
 
 Bạn có thể đổi trong [main/boards/bread-compact-wifi/config.h](../main/boards/bread-compact-wifi/config.h).
@@ -63,11 +71,10 @@ Bạn có thể đổi trong [main/boards/bread-compact-wifi/config.h](../main/b
 
 Nếu servo rung hoặc ESP reset thì thường là do thiếu dòng hoặc chưa chung mass.
 
-## 4) JSON mở rộng hành động cảm xúc
+## 4) JSON mở rộng hành động cảm xúc (chỉ cho servo đầu)
 
 Tạo file JSON riêng:
 
-- Cụm chân: `/sdcard/robot/leg_servo_actions.json`
 - Cụm đầu: `/sdcard/robot/head_servo_actions.json`
 
 Ví dụ:
@@ -133,15 +140,16 @@ Ví dụ câu lệnh tự nhiên:
 - “Nghiêng đầu tỏ vẻ tò mò”
 - “Đặt pan 120 độ, tilt 70 độ”
 
-## 6) Reload JSON không cần nạp lại firmware
+## 6) Reload JSON không cần nạp lại firmware (servo đầu)
 
 Sau khi sửa JSON trên SD, gọi:
 
-- `self.robot.dual_servo.reload_config`
+- `self.robot.head_servo.reload_config`
 
 ## 7) Tệp mã nguồn liên quan
 
 - [main/boards/common/dual_servo_controller.h](../main/boards/common/dual_servo_controller.h)
+- [main/boards/common/dual_dc_motor_controller.h](../main/boards/common/dual_dc_motor_controller.h)
 - [main/boards/bread-compact-wifi/compact_wifi_board.cc](../main/boards/bread-compact-wifi/compact_wifi_board.cc)
 - [main/boards/bread-compact-wifi/config.h](../main/boards/bread-compact-wifi/config.h)
 - [main/application.cc](../main/application.cc)

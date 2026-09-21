@@ -66,9 +66,13 @@
 // A MCP Test: Control a lamp
 #define LAMP_GPIO GPIO_NUM_18
 
-// Leg servos (di chuyển robot)
-#define LEG_SERVO_PAN_GPIO   GPIO_NUM_9
-#define LEG_SERVO_TILT_GPIO  GPIO_NUM_11
+// Wheel motors (2 DC motors via H-bridge)
+// Mapping for common drivers (L298N/TB6612-like):
+// Left motor: IN1/IN2, Right motor: IN3/IN4
+#define WHEEL_MOTOR_LEFT_IN1_GPIO   GPIO_NUM_9
+#define WHEEL_MOTOR_LEFT_IN2_GPIO   GPIO_NUM_8
+#define WHEEL_MOTOR_RIGHT_IN1_GPIO  GPIO_NUM_11
+#define WHEEL_MOTOR_RIGHT_IN2_GPIO  GPIO_NUM_17
 
 // Head servos (khớp cổ 2 trục pan-tilt)
 #define HEAD_SERVO_PAN_GPIO  GPIO_NUM_1
