@@ -889,6 +889,12 @@ else()
 endif()
 list(APPEND SOURCES ${BOARD_SOURCES})
 
+if(CONFIG_BOARD_TYPE_BREAD_COMPACT_WIFI)
+    list(APPEND SOURCES
+        "boards/bread-compact-wifi/robot_control_hub.cc"
+    )
+endif()
+
 # Select audio processor according to Kconfig
 if(CONFIG_USE_AUDIO_PROCESSOR)
     list(APPEND SOURCES "audio/processors/afe_audio_processor.cc")
