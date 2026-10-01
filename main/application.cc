@@ -802,12 +802,25 @@ void Application::InitializeProtocol() {
 
     display->SetStatus(Lang::Strings::LOADING_PROTOCOL);
 
-    if (ota_->HasMqttConfig()) {
-        protocol_ = std::make_unique<MqttProtocol>();
-    } else if (ota_->HasWebsocketConfig()) {
+    Settings websocket_settings("websocket", false);
+    const std::string ws_url = websocket_settings.GetString("url");
+    const bool force_websocket = websocket_settings.GetInt("force", 0) == 1;
+    const bool has_local_websocket_url = !ws_url.empty();
+
+    if (force_websocket || has_local_websocket_url || ota_->HasWebsocketConfig()) {
+        if (force_websocket) {
+            ESP_LOGI(TAG, "Using WebSocket protocol (forced by websocket.force)");
+        } else if (has_local_websocket_url) {
+            ESP_LOGI(TAG, "Using WebSocket protocol (local websocket.url configured)");
+        } else {
+            ESP_LOGI(TAG, "Using WebSocket protocol (OTA websocket config)");
+        }
         protocol_ = std::make_unique<WebsocketProtocol>();
+    } else if (ota_->HasMqttConfig()) {
+        ESP_LOGI(TAG, "Using MQTT protocol (OTA mqtt config)");
+        protocol_ = std::make_unique<MqttProtocol>();
     } else {
-        ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");
+        ESP_LOGW(TAG, "No protocol specified in OTA/local settings, using MQTT");
         protocol_ = std::make_unique<MqttProtocol>();
     }
 
@@ -1707,6 +1720,27 @@ void Application::ResetProtocol() {
         }
         // Reset protocol
         protocol_.reset();
+    });
+}
+
+void Application::ReloadProtocolConfig() {
+    Schedule([this]() {
+        const bool was_opened = protocol_ && protocol_->IsAudioChannelOpened();
+        const ListeningMode mode = listening_mode_;
+
+        if (protocol_ && was_opened) {
+            protocol_->CloseAudioChannel(false);
+        }
+        protocol_.reset();
+
+        InitializeProtocol();
+
+        if (was_opened && protocol_ != nullptr) {
+            SetDeviceState(kDeviceStateConnecting);
+            Schedule([this, mode]() {
+                ContinueOpenAudioChannel(mode);
+            });
+        }
     });
 }
 

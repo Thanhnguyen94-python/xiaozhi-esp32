@@ -168,8 +168,13 @@ esp_err_t Ota::CheckVersion() {
     cJSON *websocket = cJSON_GetObjectItem(root, "websocket");
     if (cJSON_IsObject(websocket)) {
         Settings settings("websocket", true);
+        const bool websocket_force_local = settings.GetInt("force", 0) == 1;
         cJSON *item = NULL;
         cJSON_ArrayForEach(item, websocket) {
+            if (websocket_force_local && item->string != nullptr && strcmp(item->string, "url") == 0) {
+                ESP_LOGI(TAG, "Skip OTA websocket.url because websocket.force=1");
+                continue;
+            }
             if (cJSON_IsString(item)) {
                 if (settings.GetString(item->string) != item->valuestring) {
                     settings.SetString(item->string, item->valuestring);

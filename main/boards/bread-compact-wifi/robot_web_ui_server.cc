@@ -22,215 +22,241 @@ constexpr const char* kWebUiHtml = R"HTML(
 <html lang="vi">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Xiaozhi Robot Dashboard</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Robot Local UI</title>
   <style>
-    :root {
-      --bg: #090d16;
-      --card-bg: rgba(20, 29, 51, 0.7);
-      --accent: #00d2ff;
-      --accent-glow: rgba(0, 210, 255, 0.3);
-      --ok: #00e676;
-      --danger: #ff5252;
-      --text: #e0e6ed;
-      --text-dim: #8a99ad;
-      --border: #1e2c4d;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
-    body { background: var(--bg); color: var(--text); min-height: 100vh; padding: 15px; }
-
-    /* Top Bar Status */
-    header {
-      display: flex; justify-content: space-between; align-items: center;
-      background: var(--card-bg); border: 1px solid var(--border);
-      padding: 12px 20px; border-radius: 12px; backdrop-filter: blur(10px); margin-bottom: 15px;
-    }
-    .brand { font-size: 18px; font-weight: 700; color: var(--accent); display: flex; align-items: center; gap: 8px; }
-    .status-badges { display: flex; gap: 10px; flex-wrap: wrap; }
-    .badge { background: #111a2e; border: 1px solid var(--border); padding: 4px 10px; border-radius: 20px; font-size: 12px; color: var(--text-dim); }
-    .badge span { color: var(--accent); font-weight: bold; }
-
-    /* Main Grid Layout */
-    .dashboard-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px;
-    }
-    .card {
-      background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px;
-      padding: 16px; backdrop-filter: blur(8px);
-    }
-    .card-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; color: var(--accent); display: flex; justify-content: space-between; }
-
-    /* D-Pad Controls */
-    .dpad-container { display: grid; grid-template-columns: repeat(3, 60px); gap: 8px; justify-content: center; margin: 15px 0; }
-    .btn-cmd {
-      background: #182544; border: 1px solid var(--border); color: var(--text);
-      border-radius: 10px; padding: 12px; font-weight: bold; cursor: pointer; transition: 0.15s;
-    }
-    .btn-cmd:active { background: var(--accent); color: #000; transform: scale(0.95); }
-    .btn-cmd.stop { background: rgba(255, 82, 82, 0.2); border-color: var(--danger); color: var(--danger); }
-
-    /* Quick Action Buttons */
-    .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .btn-action { background: #16223d; border: 1px solid var(--border); color: var(--text); padding: 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }
-    .btn-action:hover { border-color: var(--accent); }
-
-    /* Range Sliders */
-    .control-group { margin-bottom: 12px; }
-    .control-label { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-dim); margin-bottom: 4px; }
-    input[type=range] { width: 100%; accent-color: var(--accent); background: #111a2e; height: 6px; border-radius: 3px; }
-    input[type=text] { width: 100%; background: #111a2e; border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 8px; margin-bottom: 8px; }
-
-    /* Status Footer Log */
-    .log-box { font-family: monospace; font-size: 11px; color: var(--text-dim); background: #05080f; border-radius: 6px; padding: 8px; height: 40px; overflow: hidden; margin-top: 10px; }
+    :root { --bg:#0b1020; --card:#141b31; --muted:#9db0d8; --fg:#eef3ff; --pri:#4da3ff; --ok:#35c48b; }
+    * { box-sizing: border-box; font-family: Inter, system-ui, Arial, sans-serif; }
+    body { margin:0; background:linear-gradient(180deg,#091022,#0b1020); color:var(--fg); }
+    header { position:sticky; top:0; background:#0b1228ee; backdrop-filter: blur(8px); padding:10px; border-bottom:1px solid #223; }
+    .tabs { display:flex; gap:8px; flex-wrap:wrap; }
+    .tab { border:none; color:var(--fg); background:#1a2442; border-radius:10px; padding:10px 14px; cursor:pointer; }
+    .tab.active { background:var(--pri); color:#001737; font-weight:700; }
+    main { padding:14px; max-width:980px; margin:auto; }
+    .page { display:none; }
+    .page.active { display:block; }
+    .card { background:var(--card); border:1px solid #233359; border-radius:14px; padding:14px; margin:10px 0; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .muted { color:var(--muted); font-size:14px; }
+    button { border:none; border-radius:10px; padding:10px 12px; cursor:pointer; background:#22335f; color:var(--fg); }
+    button.primary { background:var(--pri); color:#001737; font-weight:700; }
+    button.ok { background:var(--ok); color:#032616; font-weight:700; }
+    input[type=range] { width:220px; }
+    input, select { background:#111a33; color:var(--fg); border:1px solid #2f4271; border-radius:8px; padding:8px; }
+    .grid3 { display:grid; grid-template-columns:repeat(3, minmax(70px, 90px)); gap:8px; justify-content:center; }
+    .dpad button { height:46px; }
+    .status { padding:8px 10px; border-radius:9px; background:#101b35; border:1px solid #233865; margin-top:6px; }
   </style>
 </head>
 <body>
-
   <header>
-    <div class="brand">🤖 Xiaozhi UI</div>
-    <div class="status-badges">
-      <div class="badge">Bánh xe: <span id="stWheel">--</span></div>
-      <div class="badge">Tốc độ L/R: <span id="stSpeed">0/0</span></div>
-      <div class="badge">Âm lượng: <span id="stVol">0%</span></div>
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-page="home">Trang chính</button>
+      <button class="tab" data-page="settings">Cài đặt</button>
+      <button class="tab" data-page="music">Nhạc</button>
+      <button class="tab" data-page="control">Bảng điều khiển robot</button>
     </div>
   </header>
 
-  <div class="dashboard-grid">
-    <!-- Card 1: Điều khiển chuyển động -->
-    <div class="card">
-      <div class="card-title">🎮 Điều khiển Bánh Xe</div>
-      <div class="dpad-container">
-        <div></div>
-        <button class="btn-cmd" onclick="sendCtrl('forward')">▲</button>
-        <div></div>
-        <button class="btn-cmd" onclick="sendCtrl('left')">◀</button>
-        <button class="btn-cmd stop" onclick="sendCtrl('stop')">■</button>
-        <button class="btn-cmd" onclick="sendCtrl('right')">▶</button>
-        <div></div>
-        <button class="btn-cmd" onclick="sendCtrl('backward')">▼</button>
-        <div></div>
+  <main>
+    <section class="page active" id="page-home">
+      <div class="card">
+        <h3>Robot local WebUI</h3>
+        <div class="muted">Điều khiển robot trực tiếp trên ESP32-S3, không cần cloud.</div>
+        <div class="status" id="homeStatus">Đang tải trạng thái...</div>
       </div>
-    </div>
+    </section>
 
-    <!-- Card 2: Hành động Cổ/Đầu -->
-    <div class="card">
-      <div class="card-title">🗣️ Hành động Servo Cổ</div>
-      <div class="btn-grid">
-        <button class="btn-action" onclick="sendCtrl('head_center')">🎯 Cân bằng (Center)</button>
-        <button class="btn-action" onclick="sendCtrl('head_nod')">👍 Gật đầu (Nod)</button>
-        <button class="btn-action" onclick="sendCtrl('head_shake')">👎 Lắc đầu (Shake)</button>
-        <button class="btn-action" onclick="sendCtrl('head_curious')">🤔 Tò mò (Curious)</button>
-      </div>
-    </div>
+    <section class="page" id="page-settings">
+      <div class="card">
+        <h3>Cài đặt chuyển động</h3>
+        <div class="row">
+          <label>Tốc độ tiến/lùi: <span id="moveSpeedVal">60</span></label>
+          <input id="moveSpeed" type="range" min="0" max="100" value="60" />
+        </div>
+        <div class="row">
+          <label>Tốc độ xoay: <span id="turnSpeedVal">55</span></label>
+          <input id="turnSpeed" type="range" min="0" max="100" value="55" />
+        </div>
+        <div class="row">
+          <label>Bước di chuyển (ms): <span id="stepMsVal">350</span></label>
+          <input id="stepMs" type="range" min="80" max="2000" value="350" />
+        </div>
+        <div class="row">
+          <label>Âm lượng: <span id="volumeVal">60</span></label>
+          <input id="volume" type="range" min="0" max="100" value="60" />
+        </div>
 
-    <!-- Card 3: Trình phát nhạc -->
-    <div class="card">
-      <div class="card-title">🎵 Âm nhạc & SD Card</div>
-      <div class="btn-grid" style="margin-bottom: 10px;">
-        <button class="btn-action" onclick="sendMusic('play_mood', {mood:'vuive'})">😊 Nhạc vui</button>
-        <button class="btn-action" onclick="sendMusic('play_mood', {mood:'buon'})">😢 Nhạc buồn</button>
-        <button class="btn-action" onclick="sendMusic('next')">⏭️ Bài tiếp</button>
-        <button class="btn-action" onclick="sendMusic('stop')">⏹️ Dừng nhạc</button>
-      </div>
-      <input type="text" id="musicQuery" placeholder="Nhập tên bài hát..." />
-      <button class="btn-action" style="width: 100%; background: var(--accent); color: #000; font-weight: bold;" onclick="searchMusic()">🔍 Tìm & Phát</button>
-    </div>
+        <h3>Cấu hình hệ thống</h3>
+        <div class="row">
+          <label for="websocketUrl">WebSocket URL</label>
+          <input id="websocketUrl" type="text" style="min-width:360px;max-width:100%;"
+                 placeholder="ws://192.168.0.102:8787/ws" />
+        </div>
+        <div class="muted">Thay đổi URL sẽ lưu vào NVS và làm mới kết nối WebSocket.</div>
 
-    <!-- Card 4: Cài đặt thông số -->
-    <div class="card">
-      <div class="card-title">⚙️ Cấu hình Hệ thống</div>
-      <div class="control-group">
-        <div class="control-label">Tốc độ tiến: <span id="vMove">60</span></div>
-        <input type="range" id="moveSpeed" min="0" max="100" value="60" oninput="syncVal('vMove', this.value)">
+        <button class="ok" id="btnSaveSettings">Lưu cài đặt</button>
+        <div class="status" id="settingsStatus"></div>
       </div>
-      <div class="control-group">
-        <div class="control-label">Tốc độ xoay: <span id="vTurn">55</span></div>
-        <input type="range" id="turnSpeed" min="0" max="100" value="55" oninput="syncVal('vTurn', this.value)">
-      </div>
-      <div class="control-group">
-        <div class="control-label">Bước di chuyển (ms): <span id="vStep">350</span></div>
-        <input type="range" id="stepMs" min="80" max="2000" value="350" oninput="syncVal('vStep', this.value)">
-      </div>
-      <div class="control-group">
-        <div class="control-label">Âm lượng loa: <span id="vVol">60</span></div>
-        <input type="range" id="volume" min="0" max="100" value="60" oninput="syncVal('vVol', this.value)">
-      </div>
-      <button class="btn-action" style="width: 100%; background: var(--ok); color: #000; font-weight: bold;" onclick="saveSettings()">💾 Lưu Cài Đặt</button>
-    </div>
-  </div>
+    </section>
 
-  <div class="log-box" id="logBox">System ready.</div>
+    <section class="page" id="page-music">
+      <div class="card">
+        <h3>Nhạc từ thẻ SD</h3>
+        <div class="row">
+          <button id="btnPlayHappy">Phát nhạc vui</button>
+          <button id="btnPlaySad">Phát nhạc buồn</button>
+          <button id="btnNextSong">Bài tiếp theo</button>
+          <button id="btnStopSong">Dừng nhạc</button>
+        </div>
+        <div class="row">
+          <input id="musicQuery" placeholder="Tên bài cần tìm" />
+          <button id="btnSearchMusic" class="primary">Tìm & phát</button>
+        </div>
+        <div class="status" id="musicStatus"></div>
+      </div>
+    </section>
+
+    <section class="page" id="page-control">
+      <div class="card dpad">
+        <h3>Điều hướng robot</h3>
+        <div class="grid3">
+          <div></div>
+          <button data-act="forward">▲</button>
+          <div></div>
+          <button data-act="left">◀</button>
+          <button data-act="stop" class="primary">■</button>
+          <button data-act="right">▶</button>
+          <div></div>
+          <button data-act="backward">▼</button>
+          <div></div>
+        </div>
+        <div class="muted">Mỗi lần nhấn sẽ đi theo thời gian "Bước di chuyển".</div>
+      </div>
+
+      <div class="card">
+        <h3>Điều khiển đầu robot</h3>
+        <div class="row">
+          <button data-act="head_center">Center</button>
+          <button data-act="head_nod">Nod</button>
+          <button data-act="head_shake">Shake</button>
+          <button data-act="head_curious">Curious</button>
+        </div>
+      </div>
+
+      <div class="status" id="controlStatus"></div>
+    </section>
+  </main>
 
   <script>
-    const $ = id => document.getElementById(id);
-    const log = msg => { $('logBox').innerText = `[${new Date().toLocaleTimeString()}] ${msg}`; };
+    const qs = (s) => document.querySelector(s);
+    const qsa = (s) => document.querySelectorAll(s);
 
-    function syncVal(labelId, val) { $(labelId).innerText = val; }
-
-    async function apiGet(url) {
-      try { const r = await fetch(url); return await r.json(); } 
-      catch(e) { log('Lỗi kết nối API'); }
+    function setTab(page) {
+      qsa('.tab').forEach(b => b.classList.toggle('active', b.dataset.page === page));
+      qsa('.page').forEach(p => p.classList.toggle('active', p.id === `page-${page}`));
     }
 
-    async function apiPost(url, body) {
-      try {
-        const r = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-        const res = await r.json();
-        log(res.message || 'Thành công');
-        return res;
-      } catch(e) { log('Lỗi gửi lệnh'); }
+    qsa('.tab').forEach(btn => btn.onclick = () => setTab(btn.dataset.page));
+
+    function syncLabels() {
+      qs('#moveSpeedVal').textContent = qs('#moveSpeed').value;
+      qs('#turnSpeedVal').textContent = qs('#turnSpeed').value;
+      qs('#stepMsVal').textContent = qs('#stepMs').value;
+      qs('#volumeVal').textContent = qs('#volume').value;
+    }
+
+    qsa('input[type=range]').forEach(r => r.addEventListener('input', syncLabels));
+
+    async function getJson(url) {
+      const r = await fetch(url);
+      return await r.json();
+    }
+
+    async function postJson(url, body) {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body || {})
+      });
+      return await r.json();
     }
 
     async function refreshStatus() {
-      const st = await apiGet('/api/status');
-      if(st) {
-        $('stWheel').innerText = st.wheel_ready ? 'Sẵn sàng' : 'Chưa kết nối';
-        $('stSpeed').innerText = `${st.left_speed}/${st.right_speed}`;
-        $('stVol').innerText = `${st.volume}%`;
-      }
+      const st = await getJson('/api/status');
+      qs('#homeStatus').textContent = `IP: ${location.host} | WheelReady: ${st.wheel_ready} | L/R speed: ${st.left_speed}/${st.right_speed} | Volume: ${st.volume}`;
+      qs('#controlStatus').textContent = `Move=${st.move_speed}, Turn=${st.turn_speed}, Step=${st.step_ms}ms`;
     }
 
-    async function sendCtrl(action) {
-      const ms = Number($('stepMs').value);
-      const isMove = ['forward','backward','left','right'].includes(action);
-      await apiPost('/api/control', isMove ? {action, duration_ms: ms} : {action});
-      setTimeout(refreshStatus, 150);
+    async function loadSettings() {
+      const s = await getJson('/api/settings');
+      qs('#moveSpeed').value = s.move_speed;
+      qs('#turnSpeed').value = s.turn_speed;
+      qs('#stepMs').value = s.step_ms;
+      qs('#volume').value = s.volume;
+      qs('#websocketUrl').value = s.websocket_url || 'ws://192.168.0.102:8787/ws';
+      syncLabels();
     }
 
-    async function sendMusic(action, extra = {}) {
-      await apiPost('/api/music', {action, ...extra});
-    }
-
-    function searchMusic() {
-      const q = $('musicQuery').value.trim();
-      if(q) sendMusic('search', {query: q});
-    }
-
-    async function saveSettings() {
-      await apiPost('/api/settings', {
-        move_speed: Number($('moveSpeed').value),
-        turn_speed: Number($('turnSpeed').value),
-        step_ms: Number($('stepMs').value),
-        volume: Number($('volume').value)
-      });
+    qs('#btnSaveSettings').onclick = async () => {
+      const payload = {
+        move_speed: Number(qs('#moveSpeed').value),
+        turn_speed: Number(qs('#turnSpeed').value),
+        step_ms: Number(qs('#stepMs').value),
+        volume: Number(qs('#volume').value),
+        websocket_url: qs('#websocketUrl').value.trim()
+      };
+      const r = await postJson('/api/settings', payload);
+      qs('#settingsStatus').textContent = r.message || 'Đã lưu.';
       refreshStatus();
+    };
+
+    async function move(action) {
+      const ms = Number(qs('#stepMs').value);
+      await postJson('/api/control', {action, duration_ms: ms});
+      qs('#controlStatus').textContent = `Đã gửi lệnh: ${action}`;
+      setTimeout(refreshStatus, 120);
     }
 
-    async function init() {
-      const s = await apiGet('/api/settings');
-      if(s) {
-        $('moveSpeed').value = s.move_speed; syncVal('vMove', s.move_speed);$('turnSpeed').value = s.turn_speed; syncVal('vTurn', s.turn_speed);
-        $('stepMs').value = s.step_ms; syncVal('vStep', s.step_ms);$('volume').value = s.volume; syncVal('vVol', s.volume);
-      }
-      refreshStatus();
+    qsa('[data-act]').forEach(btn => {
+      btn.onclick = async () => {
+        const action = btn.dataset.act;
+        if (['forward','backward','left','right'].includes(action)) {
+          await move(action);
+        } else {
+          const r = await postJson('/api/control', {action});
+          qs('#controlStatus').textContent = r.message || action;
+          setTimeout(refreshStatus, 120);
+        }
+      };
+    });
+
+    async function music(action, extra) {
+      const r = await postJson('/api/music', {action, ...(extra||{})});
+      qs('#musicStatus').textContent = r.message || 'OK';
+    }
+
+    qs('#btnPlayHappy').onclick = () => music('play_mood', {mood: 'vuive'});
+    qs('#btnPlaySad').onclick = () => music('play_mood', {mood: 'buon'});
+    qs('#btnNextSong').onclick = () => music('next');
+    qs('#btnStopSong').onclick = () => music('stop');
+    qs('#btnSearchMusic').onclick = () => {
+      const query = qs('#musicQuery').value.trim();
+      if (!query) return;
+      music('search', {query});
+    };
+
+    (async () => {
+      await loadSettings();
+      await refreshStatus();
       setInterval(refreshStatus, 3000);
-    }
-
-    init();
+    })();
   </script>
 </body>
 </html>
 )HTML";
+
+constexpr const char* kDefaultWebsocketUrl = "ws://192.168.0.102:8787/ws";
 
 }  // namespace
 
@@ -461,11 +487,18 @@ esp_err_t RobotWebUiServer::HandleSettingsGet(httpd_req_t* req) {
         volume = codec->output_volume();
     }
 
+    Settings ws_settings("websocket", false);
+    std::string websocket_url = ws_settings.GetString("url", kDefaultWebsocketUrl);
+    if (websocket_url.empty()) {
+      websocket_url = kDefaultWebsocketUrl;
+    }
+
     cJSON* root = cJSON_CreateObject();
     cJSON_AddNumberToObject(root, "move_speed", move_speed);
     cJSON_AddNumberToObject(root, "turn_speed", turn_speed);
     cJSON_AddNumberToObject(root, "step_ms", step_ms);
     cJSON_AddNumberToObject(root, "volume", volume);
+    cJSON_AddStringToObject(root, "websocket_url", websocket_url.c_str());
 
     char* json_text = cJSON_PrintUnformatted(root);
     std::string payload = json_text ? json_text : "{}";
@@ -521,10 +554,39 @@ esp_err_t RobotWebUiServer::HandleSettingsPost(httpd_req_t* req) {
         }
     }
 
+    bool websocket_url_changed = false;
+    auto* websocket_url = cJSON_GetObjectItem(root, "websocket_url");
+    if (cJSON_IsString(websocket_url) && websocket_url->valuestring != nullptr) {
+      std::string new_url = websocket_url->valuestring;
+      if (new_url.empty()) {
+        new_url = kDefaultWebsocketUrl;
+      }
+
+      Settings ws_settings("websocket", true);
+      std::string old_url = ws_settings.GetString("url", kDefaultWebsocketUrl);
+      if (old_url.empty()) {
+        old_url = kDefaultWebsocketUrl;
+      }
+
+      if (ws_settings.GetInt("force", 0) != 1) {
+        ws_settings.SetInt("force", 1);
+      }
+
+      if (new_url != old_url) {
+        ws_settings.SetString("url", new_url);
+        websocket_url_changed = true;
+      }
+    }
+
     cJSON_Delete(root);
     SaveConfig();
 
-    SendJson(req, 200, "{\"ok\":true,\"message\":\"Saved settings\"}");
+    if (websocket_url_changed) {
+      Application::GetInstance().ReloadProtocolConfig();
+      SendJson(req, 200, "{\"ok\":true,\"message\":\"Saved settings. WebSocket URL updated and connection reloaded\"}");
+    } else {
+      SendJson(req, 200, "{\"ok\":true,\"message\":\"Saved settings\"}");
+    }
     return ESP_OK;
 }
 

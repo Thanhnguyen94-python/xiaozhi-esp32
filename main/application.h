@@ -128,6 +128,12 @@ public:
      */
     void ResetProtocol();
 
+    /**
+     * Reload protocol settings from NVS and reinitialize protocol instance.
+     * If an audio channel was opened, it will be reopened using new settings.
+     */
+    void ReloadProtocolConfig();
+
 private:
     Application();
     ~Application();

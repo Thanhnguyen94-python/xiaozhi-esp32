@@ -12,6 +12,10 @@
 
 #define TAG "WS"
 
+namespace {
+constexpr const char* kDefaultWebsocketUrl = "ws://192.168.0.102:8787/ws";
+}
+
 WebsocketProtocol::WebsocketProtocol() {
     event_group_handle_ = xEventGroupCreate();
 }
@@ -82,7 +86,10 @@ void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
 
 bool WebsocketProtocol::OpenAudioChannel() {
     Settings settings("websocket", false);
-    std::string url = settings.GetString("url");
+    std::string url = settings.GetString("url", kDefaultWebsocketUrl);
+    if (url.empty()) {
+        url = kDefaultWebsocketUrl;
+    }
     std::string token = settings.GetString("token");
     int version = settings.GetInt("version");
     if (version != 0) {
