@@ -1,5 +1,6 @@
 #include "robot_control_hub.h"
 
+#include "application.h"
 #include "mcp_server.h"
 
 #include <esp_log.h>
@@ -24,14 +25,46 @@ RobotControlHub::RobotControlHub(DualDcMotorController* wheel_motor, DualServoCo
         ESP_LOGW(TAG, "Khong tao duoc timer stop: %s", esp_err_to_name(err));
         voice_motion_stop_timer_ = nullptr;
     }
+
+    esp_timer_create_args_t qr_timer_args = {
+        .callback = &RobotControlHub::QrHideTimerCallback,
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "webui_qr_hide",
+        .skip_unhandled_events = true,
+    };
+
+    err = esp_timer_create(&qr_timer_args, &qr_hide_timer_);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Khong tao duoc timer hide qr: %s", esp_err_to_name(err));
+        qr_hide_timer_ = nullptr;
+    }
 }
 
 RobotControlHub::~RobotControlHub() {
+    if (qr_hide_timer_ != nullptr) {
+        esp_timer_stop(qr_hide_timer_);
+        esp_timer_delete(qr_hide_timer_);
+        qr_hide_timer_ = nullptr;
+    }
+
     if (voice_motion_stop_timer_ != nullptr) {
         esp_timer_stop(voice_motion_stop_timer_);
         esp_timer_delete(voice_motion_stop_timer_);
         voice_motion_stop_timer_ = nullptr;
     }
+}
+
+void RobotControlHub::QrHideTimerCallback(void* arg) {
+    auto* self = static_cast<RobotControlHub*>(arg);
+    if (self == nullptr) {
+        return;
+    }
+
+    auto& app = Application::GetInstance();
+    app.Schedule([self]() {
+        self->HideWebUiQrOnDisplay();
+    });
 }
 
 void RobotControlHub::VoiceMotionStopTimerCallback(void* arg) {
@@ -87,14 +120,95 @@ std::pair<std::string, std::string> RobotControlHub::GetWebUiAccessInfo() {
     return {url, hint};
 }
 
+void RobotControlHub::HideWebUiQrOnDisplay() {
+#if CONFIG_LV_USE_QRCODE
+    if (display_ == nullptr) {
+        return;
+    }
+
+    DisplayLockGuard guard(display_);
+    if (qr_popup_ != nullptr) {
+        lv_obj_del(qr_popup_);
+        qr_popup_ = nullptr;
+    }
+#endif
+}
+
+void RobotControlHub::ShowWebUiQrOnDisplay(const std::string& url) {
+#if CONFIG_LV_USE_QRCODE
+    if (display_ == nullptr || url.empty()) {
+        return;
+    }
+
+    DisplayLockGuard guard(display_);
+
+    auto* screen = lv_screen_active();
+    if (screen == nullptr) {
+        return;
+    }
+
+    if (qr_popup_ != nullptr) {
+        lv_obj_del(qr_popup_);
+        qr_popup_ = nullptr;
+    }
+
+    qr_popup_ = lv_obj_create(screen);
+    lv_obj_set_size(qr_popup_, 128, 64);
+    lv_obj_center(qr_popup_);
+    lv_obj_set_style_border_width(qr_popup_, 1, 0);
+    lv_obj_set_style_border_color(qr_popup_, lv_color_black(), 0);
+    lv_obj_set_style_bg_color(qr_popup_, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(qr_popup_, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(qr_popup_, 0, 0);
+    lv_obj_set_style_pad_all(qr_popup_, 0, 0);
+
+    auto* qr = lv_qrcode_create(qr_popup_);
+    lv_qrcode_set_size(qr, 62);
+    lv_qrcode_set_dark_color(qr, lv_color_black());
+    lv_qrcode_set_light_color(qr, lv_color_white());
+    lv_qrcode_set_quiet_zone(qr, true);
+
+    if (lv_qrcode_update(qr, url.c_str(), static_cast<uint32_t>(url.size())) != LV_RESULT_OK) {
+        lv_obj_del(qr_popup_);
+        qr_popup_ = nullptr;
+        ESP_LOGW(TAG, "Khong tao duoc QR cho URL: %s", url.c_str());
+        return;
+    }
+
+    lv_obj_align(qr, LV_ALIGN_LEFT_MID, 2, 0);
+
+    auto* label = lv_label_create(qr_popup_);
+    lv_label_set_text(label, "Scan QR\nWebUI");
+    lv_obj_set_style_text_color(label, lv_color_black(), 0);
+    lv_obj_align(label, LV_ALIGN_RIGHT_MID, -4, -8);
+
+    auto* hint = lv_label_create(qr_popup_);
+    lv_label_set_text(hint, "10s");
+    lv_obj_set_style_text_color(hint, lv_color_black(), 0);
+    lv_obj_align(hint, LV_ALIGN_RIGHT_MID, -8, 18);
+
+    if (qr_hide_timer_ != nullptr) {
+        esp_timer_stop(qr_hide_timer_);
+        esp_timer_start_once(qr_hide_timer_, 10ULL * 1000ULL * 1000ULL);
+    }
+#else
+    (void)url;
+#endif
+}
+
 void RobotControlHub::ShowWebUiAccessOnDisplay() {
     auto [url, hint] = GetWebUiAccessInfo();
     if (!url.empty()) {
         ESP_LOGI(TAG, "WebUI access: %s", url.c_str());
+        ShowWebUiQrOnDisplay(url);
     }
 
     if (display_ != nullptr) {
-        display_->ShowNotification(hint);
+        if (url.empty()) {
+            display_->ShowNotification(hint);
+        } else {
+            display_->ShowNotification("Da hien QR WebUI tren OLED", 2500);
+        }
     }
 }
 
@@ -178,7 +292,12 @@ void RobotControlHub::RegisterTools() {
         auto [url, hint] = GetWebUiAccessInfo();
 
         if (display_ != nullptr) {
-            display_->ShowNotification(hint);
+            if (!url.empty()) {
+                ShowWebUiQrOnDisplay(url);
+                display_->ShowNotification("Da hien QR WebUI tren OLED", 2500);
+            } else {
+                display_->ShowNotification(hint);
+            }
         }
 
         if (url.empty()) {
@@ -186,7 +305,7 @@ void RobotControlHub::RegisterTools() {
         }
 
         return std::string("Dia chi WebUI la ") + url +
-               " Minh da hien dia chi nay tren man hinh OLED.";
+               " Minh da hien ma QR tren man hinh OLED de ban quet nhanh.";
     };
 
     mcp_server.AddTool("self.webui.get_access_info",
