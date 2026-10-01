@@ -339,6 +339,27 @@ std::string WifiBoard::GetDeviceStatusJson() {
     int rssi = wifi.GetRssi();
     const char* signal = rssi >= -60 ? "strong" : (rssi >= -70 ? "medium" : "weak");
     cJSON_AddStringToObject(network, "signal", signal);
+
+    // Expose local access details so cloud-side tools/LLM can answer WebUI login questions.
+    cJSON_AddBoolToObject(network, "connected", wifi.IsConnected());
+    cJSON_AddBoolToObject(network, "config_mode", wifi.IsConfigMode());
+
+    std::string ip = wifi.GetIpAddress();
+    cJSON_AddStringToObject(network, "ip", ip.c_str());
+
+    std::string webui_url;
+    if (!ip.empty()) {
+        webui_url = "http://" + ip + "/";
+    } else if (wifi.IsConfigMode()) {
+        webui_url = wifi.GetApWebUrl();
+        if (webui_url.empty()) {
+            webui_url = "http://192.168.4.1/";
+        } else if (webui_url.rfind("http://", 0) != 0 && webui_url.rfind("https://", 0) != 0) {
+            webui_url = "http://" + webui_url;
+        }
+    }
+    cJSON_AddStringToObject(network, "webui_url", webui_url.c_str());
+
     cJSON_AddItemToObject(root, "network", network);
 
     // Chip temperature

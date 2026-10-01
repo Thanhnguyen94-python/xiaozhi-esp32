@@ -222,6 +222,47 @@ private:
     }
 
 public:
+    bool IsReady() const {
+        return ready_;
+    }
+
+    void GetSpeed(int& left, int& right) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        left = left_speed_;
+        right = right_speed_;
+    }
+
+    void SetSpeed(int left, int right) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        left_speed_ = ClampSpeed(left);
+        right_speed_ = ClampSpeed(right);
+        ApplyMotorStateLocked();
+    }
+
+    void Forward(int speed) {
+        speed = std::clamp(speed, 0, 100);
+        SetSpeed(speed, speed);
+    }
+
+    void Backward(int speed) {
+        speed = std::clamp(speed, 0, 100);
+        SetSpeed(-speed, -speed);
+    }
+
+    void TurnLeft(int speed) {
+        speed = std::clamp(speed, 0, 100);
+        SetSpeed(-speed, speed);
+    }
+
+    void TurnRight(int speed) {
+        speed = std::clamp(speed, 0, 100);
+        SetSpeed(speed, -speed);
+    }
+
+    void Stop() {
+        SetSpeed(0, 0);
+    }
+
         DualDcMotorController(gpio_num_t left_in1_gpio,
                                                     gpio_num_t left_in2_gpio,
                                                     gpio_num_t right_in1_gpio,

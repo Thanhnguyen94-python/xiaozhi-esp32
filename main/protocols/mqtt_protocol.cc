@@ -156,7 +156,12 @@ bool MqttProtocol::SendText(const std::string& text) {
         return false;
     }
     if (!mqtt_->Publish(publish_topic_, text)) {
-        ESP_LOGE(TAG, "Failed to publish message: %s", text.c_str());
+        constexpr size_t kPreviewLen = 220;
+        std::string preview = text.substr(0, std::min(text.size(), kPreviewLen));
+        ESP_LOGE(TAG, "Failed to publish message (len=%u): %s%s",
+                 static_cast<unsigned>(text.size()),
+                 preview.c_str(),
+                 text.size() > kPreviewLen ? "..." : "");
         SetError(Lang::Strings::SERVER_ERROR);
         return false;
     }

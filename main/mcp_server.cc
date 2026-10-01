@@ -588,14 +588,42 @@ void McpServer::ReplyError(int id, const std::string& message) {
 }
 
 void McpServer::GetToolsList(int id, const std::string& cursor, bool list_user_only_tools) {
-    const int max_payload_size = 8000;
+    // Keep each tools/list result small enough for constrained MQTT brokers/bridges.
+    // Larger payloads can trigger connection reset by peer on some deployments.
+    const int max_payload_size = 3000;
     std::string json = "{\"tools\":[";
-    
+
+    std::vector<const McpTool*> ordered_tools;
+    ordered_tools.reserve(tools_.size());
+
+    auto should_include = [list_user_only_tools](const McpTool* tool) {
+        return list_user_only_tools || !tool->user_only();
+    };
+
+    auto is_priority_tool = [](const McpTool* tool) {
+        const std::string& name = tool->name();
+        return name.rfind("self.webui.", 0) == 0 ||
+               name.rfind("self.robot.", 0) == 0;
+    };
+
+    // Put robot-control and WebUI tools first so assistant can discover local access/control
+    // actions even when tool pagination occurs with limited payload size.
+    for (const auto* tool : tools_) {
+        if (should_include(tool) && is_priority_tool(tool)) {
+            ordered_tools.push_back(tool);
+        }
+    }
+    for (const auto* tool : tools_) {
+        if (should_include(tool) && !is_priority_tool(tool)) {
+            ordered_tools.push_back(tool);
+        }
+    }
+
     bool found_cursor = cursor.empty();
-    auto it = tools_.begin();
+    auto it = ordered_tools.begin();
     std::string next_cursor = "";
-    
-    while (it != tools_.end()) {
+
+    while (it != ordered_tools.end()) {
         // 如果我们还没有找到起始位置，继续搜索
         if (!found_cursor) {
             if ((*it)->name() == cursor) {
@@ -606,11 +634,6 @@ void McpServer::GetToolsList(int id, const std::string& cursor, bool list_user_o
             }
         }
 
-        if (!list_user_only_tools && (*it)->user_only()) {
-            ++it;
-            continue;
-        }
-        
         // 添加tool前检查大小
         std::string tool_json = (*it)->to_json() + ",";
         if (json.length() + tool_json.length() + 30 > max_payload_size) {
@@ -627,7 +650,7 @@ void McpServer::GetToolsList(int id, const std::string& cursor, bool list_user_o
         json.pop_back();
     }
     
-    if (json.back() == '[' && !tools_.empty()) {
+    if (json.back() == '[' && !ordered_tools.empty()) {
         // 如果没有添加任何tool，返回错误
         ESP_LOGE(TAG, "tools/list: Failed to add tool %s because of payload size limit", next_cursor.c_str());
         ReplyError(id, "Failed to add tool " + next_cursor + " because of payload size limit");

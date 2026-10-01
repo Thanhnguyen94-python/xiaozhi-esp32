@@ -10,6 +10,7 @@
 #include "assets.h"
 #include "settings.h"
 #include "dual_servo_controller.h"
+#include <wifi_manager.h>
 
 #include <cstring>
 #include <cctype>
@@ -144,6 +145,63 @@ std::vector<std::string> ExtractMeaningfulTokens(const std::string& normalized) 
         start = end + 1;
     }
     return tokens;
+}
+
+bool ContainsAnyPhrase(const std::string& s, const std::initializer_list<const char*>& phrases) {
+    for (const auto* phrase : phrases) {
+        if (phrase != nullptr && s.find(phrase) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IsWebUiAddressQuestion(const std::string& text) {
+    auto normalized = NormalizeVietnameseSearchText(text);
+    if (normalized.empty()) {
+        return false;
+    }
+
+    bool asks_webui = ContainsAnyPhrase(normalized, {
+        "web ui", "webui", "ui robot", "trang dieu khien", "dieu khien robot"
+    });
+    bool asks_address = ContainsAnyPhrase(normalized, {
+        "ip", "dia chi", "link", "dang nhap", "o dau", "doc to", "doc dia chi", "mo trang"
+    });
+
+    return asks_webui && asks_address;
+}
+
+void BuildWebUiAccessInfo(std::string& url, std::string& hint) {
+    auto& wifi = WifiManager::GetInstance();
+    url.clear();
+    hint.clear();
+
+    if (wifi.IsConnected()) {
+        std::string ip = wifi.GetIpAddress();
+        if (!ip.empty()) {
+            url = "http://" + ip + "/";
+            hint = "WebUI (same Wi-Fi): " + url;
+            return;
+        }
+    }
+
+    if (wifi.IsConfigMode()) {
+        std::string ap_url = wifi.GetApWebUrl();
+        if (!ap_url.empty()) {
+            if (ap_url.rfind("http://", 0) == 0 || ap_url.rfind("https://", 0) == 0) {
+                url = ap_url;
+            } else {
+                url = "http://" + ap_url;
+            }
+        } else {
+            url = "http://192.168.4.1/";
+        }
+        hint = "WebUI (AP mode): " + url;
+        return;
+    }
+
+    hint = "WebUI chua san sang. Hay doi robot ket noi Wi-Fi.";
 }
 
 bool HasOggExtension(const std::string& file_name) {
@@ -820,9 +878,32 @@ void Application::InitializeProtocol() {
             auto text = cJSON_GetObjectItem(root, "text");
             if (cJSON_IsString(text)) {
                 ESP_LOGI(TAG, ">> %s", text->valuestring);
+                std::string user_text = text->valuestring;
                 Schedule([display, message = std::string(text->valuestring)]() {
                     display->SetChatMessage("user", message.c_str());
                 });
+
+                if (IsWebUiAddressQuestion(user_text)) {
+                    Schedule([display]() {
+                        std::string url;
+                        std::string hint;
+                        BuildWebUiAccessInfo(url, hint);
+
+                        if (display != nullptr) {
+                            display->ShowNotification(hint, 9000);
+                            if (!url.empty()) {
+                                std::string local_answer = "Địa chỉ WebUI: " + url;
+                                display->SetChatMessage("assistant", local_answer.c_str());
+                            }
+                        }
+
+                        if (!url.empty()) {
+                            ESP_LOGI(TAG, "Local WebUI access info: %s", url.c_str());
+                        } else {
+                            ESP_LOGW(TAG, "Local WebUI access info unavailable: %s", hint.c_str());
+                        }
+                    });
+                }
             }
         } else if (strcmp(type->valuestring, "llm") == 0) {
             auto emotion = cJSON_GetObjectItem(root, "emotion");
