@@ -602,8 +602,12 @@ void McpServer::GetToolsList(int id, const std::string& cursor, bool list_user_o
 
     auto is_priority_tool = [](const McpTool* tool) {
         const std::string& name = tool->name();
+        if (name == "self.get_device_status") {
+            return true;
+        }
         return name.rfind("self.webui.", 0) == 0 ||
-               name.rfind("self.robot.", 0) == 0;
+               name.rfind("self.robot.", 0) == 0 ||
+               name.rfind("self.audio_speaker.", 0) == 0;
     };
 
     // Put robot-control and WebUI tools first so assistant can discover local access/control
