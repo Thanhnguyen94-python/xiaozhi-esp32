@@ -79,3 +79,85 @@
 #define HEAD_SERVO_TILT_GPIO GPIO_NUM_2
 
 #endif // _BOARD_CONFIG_H_
+
+// sơ đồ đấu nối phần cứng cho board "Bread Compact WiFi" (ESP32-S3 mini) với các module ngoại vi:
+/*
+1) Nguồn và mass (quan trọng nhất)
+Tất cả module phải nối chung GND với ESP32.
+GPIO ESP32 là 3.3V logic → không đưa 5V trực tiếp vào chân GPIO.
+Motor + servo nên cấp nguồn riêng (ví dụ 5V/6V), không lấy trực tiếp từ 3V3 ESP.
+Khi dùng nguồn ngoài cho motor/servo:
+GND nguồn ngoài ↔ GND ESP32 (bắt buộc).
+2) I2S Audio (đang ở chế độ AUDIO_I2S_METHOD_SIMPLEX)
+Mic I2S
+MIC WS/LRCLK → GPIO4
+MIC SCK/BCLK → GPIO5
+MIC SD/DOUT → GPIO6
+MIC VCC → 3V3
+MIC GND → GND
+Amp/Speaker I2S (vd MAX98357A)
+AMP DIN → GPIO7
+AMP BCLK → GPIO15
+AMP LRC → GPIO16
+AMP VIN → 5V (hoặc theo module)
+AMP GND → GND
+Speaker đấu vào ngõ ra SPK của amp.
+3) OLED I2C
+SDA → GPIO41
+SCL → GPIO42
+VCC → 3V3 (hoặc theo module)
+GND → GND
+Nếu OLED không lên, kiểm tra địa chỉ I2C (0x3C/0x3D) và loại màn hình trong menuconfig.
+
+4) SD Card SPI (SDSPI 4-wire)
+MISO → GPIO12
+MOSI → GPIO13
+SCLK → GPIO14
+CS → GPIO10
+VCC → 3V3 (ưu tiên module hỗ trợ 3.3V)
+GND → GND
+5) Nút bấm / LED
+BOOT_BUTTON → GPIO0 (thường là nút BOOT onboard)
+TOUCH_BUTTON → GPIO47
+VOL+ → GPIO40
+VOL- → GPIO39
+BUILTIN_LED → GPIO48
+Cách đấu nút rời phổ biến:
+
+Một chân nút → GPIO
+Chân còn lại → GND
+Dùng pull-up nội (nếu code đã bật), nhấn = mức 0.
+6) Đèn lamp
+LAMP_GPIO → GPIO18
+Nếu là LED nhỏ:
+
+GPIO18 → điện trở 220–1kΩ → LED → GND.
+Nếu là tải lớn (đèn/relay):
+
+Dùng transistor/MOSFET/relay driver, không kéo trực tiếp từ GPIO.
+7) Motor bánh xe (H-bridge)
+Theo config:
+
+Left IN1 → GPIO9
+Left IN2 → GPIO8
+Right IN1 → GPIO11
+Right IN2 → GPIO17
+Đấu với driver L298N/TB6612:
+
+ESP GPIO ↔ chân IN tương ứng driver
+Driver VM ↔ nguồn motor
+Driver VCC ↔ 3V3/5V logic (theo driver)
+Driver GND ↔ GND chung
+Motor trái/phải ↔ OUTA/OUTB của driver
+Nếu driver có ENA/ENB:
+
+Kéo lên mức HIGH (hoặc nối PWM nếu muốn điều tốc).
+8) Servo đầu pan-tilt
+PAN → GPIO1
+TILT → GPIO2
+Servo V+ → 5V/6V nguồn ngoài
+Servo GND → GND chung với ESP
+Lưu ý:
+
+Servo hút dòng cao lúc khởi động/quay tải → nguồn phải đủ dòng.
+Không cấp servo từ chân 3V3 của ESP.*/
