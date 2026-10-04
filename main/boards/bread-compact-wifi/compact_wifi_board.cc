@@ -14,6 +14,7 @@
 #include "assets/lang_config.h"
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <driver/i2c_master.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
@@ -117,11 +118,16 @@ private:
             }
             app.ToggleChatState();
         });
+        // Touch sensor GPIO47: trigger on PRESS_DOWN to avoid missing click/release events
+        // on some capacitive modules. Add debounce to prevent bounce/repeat toggles.
         touch_button_.OnPressDown([this]() {
-            Application::GetInstance().StartListening();
-        });
-        touch_button_.OnPressUp([this]() {
-            Application::GetInstance().StopListening();
+            static int64_t s_last_touch_us = 0;
+            int64_t now_us = esp_timer_get_time();
+            if ((now_us - s_last_touch_us) < 400000) {
+                return;
+            }
+            s_last_touch_us = now_us;
+            Application::GetInstance().ToggleChatState();
         });
 
         volume_up_button_.OnClick([this]() {
