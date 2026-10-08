@@ -8,6 +8,7 @@
 #include "lamp_controller.h"
 #include "dual_servo_controller.h"
 #include "dual_dc_motor_controller.h"
+#include "rc_sbus_controller.h"
 #include "robot_web_ui_server.h"
 #include "robot_control_hub.h"
 #include "led/single_led.h"
@@ -242,6 +243,9 @@ private:
                 WHEEL_MOTOR_RIGHT_IN1_GPIO,
                 WHEEL_MOTOR_RIGHT_IN2_GPIO,
                 {"self.robot.wheels"});
+
+            // RC override via MC7RE SBUS (MC6C transmitter).
+            rc_sbus::Init(wheel_motor_);
         }
 
         // Dedicated head pan-tilt tools and emotion binding.

@@ -2,6 +2,7 @@
 #define _BOARD_CONFIG_H_
 
 #include <driver/gpio.h>
+#include <driver/uart.h>
 
 #define AUDIO_INPUT_SAMPLE_RATE  16000
 #define AUDIO_OUTPUT_SAMPLE_RATE 24000
@@ -73,6 +74,14 @@
 #define WHEEL_MOTOR_LEFT_IN2_GPIO   GPIO_NUM_8
 #define WHEEL_MOTOR_RIGHT_IN1_GPIO  GPIO_NUM_11
 #define WHEEL_MOTOR_RIGHT_IN2_GPIO  GPIO_NUM_17
+
+// RC receiver input (MC7RE M.BUS / SBUS)
+#define RC_SBUS_UART_PORT           UART_NUM_1
+#define RC_SBUS_RX_PIN              GPIO_NUM_19
+#define RC_SBUS_TX_PIN              GPIO_NUM_NC
+#define RC_SBUS_BAUDRATE            100000
+#define RC_SBUS_DEADZONE_PERCENT    10
+#define RC_SBUS_FRAME_TIMEOUT_MS    300
 
 // Head servos (khớp cổ 2 trục pan-tilt)
 #define HEAD_SERVO_PAN_GPIO  GPIO_NUM_1
