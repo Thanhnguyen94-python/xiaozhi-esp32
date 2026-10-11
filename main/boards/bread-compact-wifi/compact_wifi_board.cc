@@ -1,6 +1,7 @@
 #include "wifi_board.h"
 #include "codecs/no_audio_codec.h"
 #include "display/oled_display.h"
+#include "display/dual_oled_display.h"
 #include "system_reset.h"
 #include "application.h"
 #include "button.h"
@@ -35,6 +36,14 @@ private:
     esp_lcd_panel_io_handle_t panel_io_ = nullptr;
     esp_lcd_panel_handle_t panel_ = nullptr;
     Display* display_ = nullptr;
+
+#ifdef CONFIG_BREAD_COMPACT_WIFI_DUAL_OLED
+    i2c_master_bus_handle_t display2_i2c_bus_ = nullptr;
+    esp_lcd_panel_io_handle_t panel2_io_ = nullptr;
+    esp_lcd_panel_handle_t panel2_ = nullptr;
+    OledDisplay* face_oled_ = nullptr;
+    OledDisplay* text_oled_ = nullptr;
+#endif
     Button boot_button_;
     Button touch_button_;
     Button volume_up_button_;
@@ -103,12 +112,84 @@ private:
         }
         ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel_, false));
 
-        // Set the display to on
+                // Set the display to on
         ESP_LOGI(TAG, "Turning display on");
         ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_, true));
 
-        display_ = new OledDisplay(panel_io_, panel_, DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
+#ifdef CONFIG_BREAD_COMPACT_WIFI_DUAL_OLED
+        // Màn chính giờ chỉ hiển thị face, sẽ ghép với màn text trong DualOledDisplay
+        face_oled_ = new OledDisplay(panel_io_, panel_, DISPLAY_WIDTH, DISPLAY_HEIGHT,
+                                     DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, OledRole::kFaceOnly);
+        display_ = face_oled_;  // tạm, sẽ ghi đè bằng DualOledDisplay
+#else
+        display_ = new OledDisplay(panel_io_, panel_, DISPLAY_WIDTH, DISPLAY_HEIGHT,
+                                   DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, OledRole::kFull);
+#endif
     }
+
+#ifdef CONFIG_BREAD_COMPACT_WIFI_DUAL_OLED
+    // ==================================================================
+    // Khởi tạo màn 0.91" trên bus I2C riêng (SDA=21, SCL=38)
+    // ==================================================================
+    void InitializeDisplay2I2c() {
+        i2c_master_bus_config_t bus_config = {
+            .i2c_port = DISPLAY2_I2C_PORT,
+            .sda_io_num = DISPLAY2_SDA_PIN,
+            .scl_io_num = DISPLAY2_SCL_PIN,
+            .clk_source = I2C_CLK_SRC_DEFAULT,
+            .glitch_ignore_cnt = 7,
+            .intr_priority = 0,
+            .trans_queue_depth = 0,
+            .flags = {
+                .enable_internal_pullup = 1,
+            },
+        };
+        ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &display2_i2c_bus_));
+    }
+
+    void InitializeSecondSsd1306Display() {
+        esp_lcd_panel_io_i2c_config_t io_config = {};
+        io_config.dev_addr = DISPLAY2_ADDR;
+        io_config.on_color_trans_done = nullptr;
+        io_config.user_ctx = nullptr;
+        io_config.control_phase_bytes = 1;
+        io_config.dc_bit_offset = 6;
+        io_config.lcd_cmd_bits = 8;
+        io_config.lcd_param_bits = 8;
+        io_config.flags.dc_low_on_data = 0;
+        io_config.flags.disable_control_phase = 0;
+        io_config.scl_speed_hz = 400 * 1000;
+
+        ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(display2_i2c_bus_, &io_config, &panel2_io_));
+
+        ESP_LOGI(TAG, "Install second SSD1306 driver (0.91\")");
+        esp_lcd_panel_dev_config_t panel_config = {};
+        panel_config.reset_gpio_num = GPIO_NUM_NC;
+        panel_config.bits_per_pixel = 1;
+
+        esp_lcd_panel_ssd1306_config_t ssd1306_config = {
+            .height = static_cast<uint8_t>(DISPLAY2_HEIGHT),
+        };
+        panel_config.vendor_config = &ssd1306_config;
+
+#ifdef SH1106
+        ESP_ERROR_CHECK(esp_lcd_new_panel_sh1106(panel2_io_, &panel_config, &panel2_));
+#else
+        ESP_ERROR_CHECK(esp_lcd_new_panel_ssd1306(panel2_io_, &panel_config, &panel2_));
+#endif
+        ESP_ERROR_CHECK(esp_lcd_panel_reset(panel2_));
+        ESP_ERROR_CHECK(esp_lcd_panel_init(panel2_));
+        ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel2_, false));
+        ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel2_, true));
+
+        text_oled_ = new OledDisplay(panel2_io_, panel2_, DISPLAY2_WIDTH, DISPLAY2_HEIGHT,
+                                     DISPLAY2_MIRROR_X, DISPLAY2_MIRROR_Y, OledRole::kTextOnly);
+
+        ESP_LOGI(TAG, "Wrapping face + text into DualOledDisplay");
+        display_ = new DualOledDisplay(face_oled_, text_oled_);
+    }
+#endif  // CONFIG_BREAD_COMPACT_WIFI_DUAL_OLED
+    
 
     void InitializeButtons() {
         boot_button_.OnClick([this]() {
@@ -284,19 +365,25 @@ private:
     }
 
 public:
-    CompactWifiBoard() :
+        CompactWifiBoard() :
         boot_button_(BOOT_BUTTON_GPIO),
         touch_button_(TOUCH_BUTTON_GPIO),
         volume_up_button_(VOLUME_UP_BUTTON_GPIO),
         volume_down_button_(VOLUME_DOWN_BUTTON_GPIO) {
         InitializeDisplayI2c();
         InitializeSsd1306Display();
+
+#ifdef CONFIG_BREAD_COMPACT_WIFI_DUAL_OLED
+        InitializeDisplay2I2c();
+        InitializeSecondSsd1306Display();
+#endif
+
         InitializeSdCard();
         InitializeButtons();
         InitializeTools();
     }
 
-    virtual ~CompactWifiBoard() {
+        virtual ~CompactWifiBoard() {
         delete control_hub_;
         control_hub_ = nullptr;
 
@@ -308,6 +395,18 @@ public:
 
         delete wheel_motor_;
         wheel_motor_ = nullptr;
+
+#ifdef CONFIG_BREAD_COMPACT_WIFI_DUAL_OLED
+        // DualOledDisplay sẽ tự delete face_oled_ và text_oled_
+        delete display_;
+        display_ = nullptr;
+        face_oled_ = nullptr;
+        text_oled_ = nullptr;
+
+        if (panel2_ != nullptr) { esp_lcd_panel_del(panel2_); panel2_ = nullptr; }
+        if (panel2_io_ != nullptr) { esp_lcd_panel_io_del(panel2_io_); panel2_io_ = nullptr; }
+        if (display2_i2c_bus_ != nullptr) { i2c_del_master_bus(display2_i2c_bus_); display2_i2c_bus_ = nullptr; }
+#endif
     }
 
     virtual Led* GetLed() override {

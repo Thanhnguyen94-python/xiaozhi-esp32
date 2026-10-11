@@ -53,6 +53,22 @@
 #define DISPLAY_MIRROR_X true
 #define DISPLAY_MIRROR_Y true
 
+// =====================================================================
+// Dual OLED config (chỉ dùng khi CONFIG_BREAD_COMPACT_WIFI_DUAL_OLED=y)
+// - Màn chính (0.96") = Face   → bus I2C hiện tại (41/42), addr 0x3C
+// - Màn phụ   (0.91") = Text   → bus I2C riêng (21/38), addr 0x3C
+// =====================================================================
+#ifdef CONFIG_BREAD_COMPACT_WIFI_DUAL_OLED
+#define DISPLAY2_SDA_PIN       GPIO_NUM_21
+#define DISPLAY2_SCL_PIN       GPIO_NUM_38
+#define DISPLAY2_I2C_PORT      I2C_NUM_1
+#define DISPLAY2_ADDR          0x3C
+#define DISPLAY2_WIDTH         128
+#define DISPLAY2_HEIGHT        32
+#define DISPLAY2_MIRROR_X      true
+#define DISPLAY2_MIRROR_Y      true
+#endif
+
 // SD card over SPI (4-wire)
 #define SDCARD_SPI_MISO GPIO_NUM_12
 #define SDCARD_SPI_MOSI GPIO_NUM_13

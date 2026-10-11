@@ -720,6 +720,17 @@ choice DISPLAY_OLED_TYPE
         bool "SH1106 128*64"
 endchoice
 
+config BREAD_COMPACT_WIFI_DUAL_OLED
+    bool "Bread Compact WiFi - Dual OLED (0.96\" face + 0.91\" text)"
+    depends on BOARD_TYPE_BREAD_COMPACT_WIFI
+    default n
+    help
+        Bật chế độ 2 màn hình OLED cho board Bread Compact WiFi.
+        - Màn 0.96" (bus I2C 41/42, addr 0x3C): hiển thị face/emotion.
+        - Màn 0.91" (bus I2C 21/38, addr 0x3C): hiển thị status + chat.
+
+        Yêu cầu: đã hàn/nối màn thứ 2 vào GPIO 21 (SDA) và GPIO 38 (SCL).
+
 choice DISPLAY_LCD_TYPE
     depends on BOARD_TYPE_BREAD_COMPACT_WIFI_LCD || BOARD_TYPE_BREAD_COMPACT_ESP32_LCD || BOARD_TYPE_CGC || BOARD_TYPE_BREAD_COMPACT_WIFI_CAM
     prompt "LCD Type"
