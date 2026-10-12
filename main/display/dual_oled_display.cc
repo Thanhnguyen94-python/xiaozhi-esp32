@@ -52,6 +52,7 @@ void DualOledDisplay::SetupUI() {
 }
 
 void DualOledDisplay::SetStatus(const char* status) {
+    if (face_) face_->SetStatus(status);
     if (text_) text_->SetStatus(status);
 }
 
