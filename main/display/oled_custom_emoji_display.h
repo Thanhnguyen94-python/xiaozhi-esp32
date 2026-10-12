@@ -23,6 +23,8 @@ public:
 
 private:
     lv_obj_t* face_root_ = nullptr;
+    bool in_standby_ = false;   // Đang ở trạng thái chờ (STANDBY/IDLE)
+    uint32_t standby_enter_tick_ = 0;
 
     // Cung tròn cho mặt happy (mắt ^^ và miệng ◡)
     lv_obj_t* happy_left_eye_arc_  = nullptr;
@@ -40,6 +42,13 @@ private:
 
     uint32_t sad_anim_tick_ = 0;
 
+    // Neutral (listening) animation
+    uint32_t neutral_anim_tick_   = 0;
+    uint8_t  eye_fall_side_       = 0;   // 0=none, 1=trái, 2=phải
+    uint8_t  eye_fall_state_      = 0;   // 0=idle, 1=falling, 2=bouncing
+    uint32_t eye_fall_tick_       = 0;
+    uint32_t eye_fall_next_tick_  = 0;
+
     // Sleepy face
     lv_obj_t* sleepy_left_eye_   = nullptr;
     lv_obj_t* sleepy_right_eye_  = nullptr;
@@ -49,6 +58,16 @@ private:
     lv_point_precise_t sleepy_z_pts_[3][4];
 
     uint32_t sleepy_anim_tick_ = 0;
+
+    // Thinking face - bóng đèn
+    lv_obj_t* thinking_bulb_       = nullptr;
+    lv_obj_t* thinking_bulb_inner_ = nullptr;
+    lv_obj_t* thinking_zap_        = nullptr;
+    lv_obj_t* thinking_base_       = nullptr;
+    lv_obj_t* thinking_rays_[3]    = {nullptr, nullptr, nullptr};
+    lv_point_precise_t thinking_zap_pts_[4];
+    lv_point_precise_t thinking_ray_pts_[3][2];
+    uint32_t thinking_anim_tick_   = 0;
 
     // Bob animation
     lv_anim_t bob_anim_;

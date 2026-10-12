@@ -213,28 +213,28 @@ private:
             Application::GetInstance().ToggleChatState();
         });
 
-        // volume_up_button_.OnClick([this]() {
-        //     auto codec = GetAudioCodec();
-        //     auto volume = codec->output_volume() + 10;
-        //     if (volume > 100) {
-        //         volume = 100;
-        //     }
-        //     codec->SetOutputVolume(volume);
-        //     GetDisplay()->ShowNotification(Lang::Strings::VOLUME + std::to_string(volume));
-        // });
-        // ============ TEST MODE: Volume Up để đổi face ============
         volume_up_button_.OnClick([this]() {
-            static const char* kTestEmotions[] = {
-                "neutral", "happy", "angry", "surprised", "sad", "sleepy", "thinking"
-            };
-            static int idx = 0;
-            const char* emo = kTestEmotions[idx];
-            idx = (idx + 1) % 7;
-            ESP_LOGI(TAG, ">>> TEST FACE: %s", emo);
-            if (GetDisplay()) {
-                GetDisplay()->SetEmotion(emo);
+            auto codec = GetAudioCodec();
+            auto volume = codec->output_volume() + 10;
+            if (volume > 100) {
+                volume = 100;
             }
+            codec->SetOutputVolume(volume);
+            GetDisplay()->ShowNotification(Lang::Strings::VOLUME + std::to_string(volume));
         });
+        // ============ TEST MODE: Volume Up để đổi face ============
+        // volume_up_button_.OnClick([this]() {
+        //     static const char* kTestEmotions[] = {
+        //         "neutral", "happy", "angry", "surprised", "sad", "sleepy", "thinking"
+        //     };
+        //     static int idx = 0;
+        //     const char* emo = kTestEmotions[idx];
+        //     idx = (idx + 1) % 7;
+        //     ESP_LOGI(TAG, ">>> TEST FACE: %s", emo);
+        //     if (GetDisplay()) {
+        //         GetDisplay()->SetEmotion(emo);
+        //     }
+        // });
         // ============ HẾT TEST MODE ============
 
         volume_up_button_.OnLongPress([this]() {

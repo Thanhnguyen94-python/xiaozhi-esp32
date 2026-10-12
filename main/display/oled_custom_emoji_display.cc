@@ -411,6 +411,65 @@ void OledCustomEmojiDisplay::SetupFaceUI_128x64() {
         lv_obj_add_flag(sleepy_z_[i], LV_OBJ_FLAG_HIDDEN);
     }
 
+        // ============ THINKING FACE: BÓNG ĐÈN ============
+    // Bóng đèn 18x18, đặt cao ở góc phải
+    thinking_bulb_ = lv_obj_create(face_root_);
+    lv_obj_set_size(thinking_bulb_, 18, 18);
+    lv_obj_set_style_radius(thinking_bulb_, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(thinking_bulb_, lv_color_black(), 0);
+    lv_obj_set_style_border_width(thinking_bulb_, 0, 0);
+    lv_obj_set_style_pad_all(thinking_bulb_, 0, 0);
+    lv_obj_set_pos(thinking_bulb_, 104, 2);
+    lv_obj_add_flag(thinking_bulb_, LV_OBJ_FLAG_HIDDEN);
+
+    // Vòng trắng bên trong (18 - 2*3 = 12)
+    thinking_bulb_inner_ = lv_obj_create(thinking_bulb_);
+    lv_obj_set_size(thinking_bulb_inner_, 12, 12);
+    lv_obj_set_style_radius(thinking_bulb_inner_, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(thinking_bulb_inner_, lv_color_white(), 0);
+    lv_obj_set_style_border_width(thinking_bulb_inner_, 0, 0);
+    lv_obj_set_style_pad_all(thinking_bulb_inner_, 0, 0);
+    lv_obj_center(thinking_bulb_inner_);
+
+    // Tia sét bên trong — toạ độ tương đối trong bulb 18x18
+    thinking_zap_ = lv_line_create(thinking_bulb_);
+    thinking_zap_pts_[0] = {11, 3};
+    thinking_zap_pts_[1] = {6, 8};
+    thinking_zap_pts_[2] = {10, 8};
+    thinking_zap_pts_[3] = {6, 15};
+    lv_line_set_points(thinking_zap_, thinking_zap_pts_, 4);
+    lv_obj_set_style_line_width(thinking_zap_, 2, 0);
+    lv_obj_set_style_line_color(thinking_zap_, lv_color_black(), 0);
+    lv_obj_set_style_line_rounded(thinking_zap_, true, 0);
+    lv_obj_add_flag(thinking_zap_, LV_OBJ_FLAG_HIDDEN);
+
+    // Chuôi đèn dài hơn: 8x6
+    thinking_base_ = lv_obj_create(face_root_);
+    lv_obj_set_size(thinking_base_, 8, 6);
+    lv_obj_set_style_radius(thinking_base_, 1, 0);
+    lv_obj_set_style_bg_color(thinking_base_, lv_color_black(), 0);
+    lv_obj_set_style_border_width(thinking_base_, 0, 0);
+    lv_obj_set_style_pad_all(thinking_base_, 0, 0);
+    lv_obj_set_pos(thinking_base_, 109, 18);   // ngay dưới bulb (bulb bottom = 20)
+    lv_obj_add_flag(thinking_base_, LV_OBJ_FLAG_HIDDEN);
+
+    // 3 tia sáng quanh đỉnh bulb (dịch theo bulb mới)
+    static const lv_coord_t kRayData[3][4] = {
+        {  98,  5,   95,  2 },   // trên-trái
+        { 113,  1,  113, 0 },    // trên
+        { 128,  5,  131,  2 },   // trên-phải
+    };
+    for (int i = 0; i < 3; i++) {
+        thinking_ray_pts_[i][0] = {(lv_value_precise_t)kRayData[i][0], (lv_value_precise_t)kRayData[i][1]};
+        thinking_ray_pts_[i][1] = {(lv_value_precise_t)kRayData[i][2], (lv_value_precise_t)kRayData[i][3]};
+        thinking_rays_[i] = lv_line_create(face_root_);
+        lv_line_set_points(thinking_rays_[i], thinking_ray_pts_[i], 2);
+        lv_obj_set_style_line_width(thinking_rays_[i], 2, 0);
+        lv_obj_set_style_line_color(thinking_rays_[i], lv_color_black(), 0);
+        lv_obj_set_style_line_rounded(thinking_rays_[i], true, 0);
+        lv_obj_add_flag(thinking_rays_[i], LV_OBJ_FLAG_HIDDEN);
+    }
+
     // ============ BOB ANIMATION ============
     // Nhấp nhô face lên xuống 0 → 3px, ping-pong, ~2.6s/vòng
     lv_anim_init(&bob_anim_);
@@ -424,6 +483,12 @@ void OledCustomEmojiDisplay::SetupFaceUI_128x64() {
     lv_anim_set_repeat_count(&bob_anim_, LV_ANIM_REPEAT_INFINITE);
     lv_anim_set_path_cb(&bob_anim_, lv_anim_path_ease_in_out);
     lv_anim_start(&bob_anim_);
+
+    // Khởi tạo animation state cho neutral (chỉ chạy 1 lần lúc boot)
+    neutral_anim_tick_  = 0;
+    eye_fall_state_     = 0;
+    eye_fall_side_      = 0;
+    eye_fall_next_tick_ = 200;   // ~16s sau boot, mắt rơi lần đầu
 
     if (face_timer_ != nullptr) lv_timer_delete(face_timer_);
     face_timer_ = lv_timer_create(FaceTimerCallback, 80, this);
@@ -455,14 +520,42 @@ void OledCustomEmojiDisplay::SetStatus(const char* status) {
     OledDisplay::SetStatus(status);
     if (!IsFaceMode() || face_root_ == nullptr || status == nullptr) return;
 
+    // ---- Xử lý lip-sync khi SPEAKING ----
     bool speaking = std::strcmp(status, Lang::Strings::SPEAKING) == 0;
-    if (speaking_ == speaking) return;
+    if (speaking_ != speaking) {
+        speaking_ = speaking;
+        speaking_frame_ = 0;
+        ESP_LOGI(TAG, "lip-sync %s", speaking_ ? "ON" : "OFF");
+        DisplayLockGuard lock(this);
+        RenderFace();
+    }
 
-    speaking_ = speaking;
-    speaking_frame_ = 0;
-    ESP_LOGI(TAG, "lip-sync %s", speaking_ ? "ON" : "OFF");
-    DisplayLockGuard lock(this);
-    RenderFace();
+    // ---- Auto emotion theo trạng thái hệ thống ----
+    // Chỉ đổi mặt khi KHÔNG đang nói (tránh giật face giữa câu)
+    if (speaking_) return;
+
+    if (std::strcmp(status, Lang::Strings::STANDBY) == 0) {
+        // Vào standby: đánh dấu mốc thời gian, chưa sleepy vội
+        in_standby_ = true;
+        standby_enter_tick_ = frame_count_;
+        if (std::strcmp(current_face_emotion_, "sleepy") != 0 &&
+            std::strcmp(current_face_emotion_, "neutral") != 0) {
+            ESP_LOGI(TAG, "auto face: standby -> neutral (waiting to sleep)");
+            current_face_emotion_ = "neutral";
+            DisplayLockGuard lock(this);
+            RenderFace();
+        }
+    } else if (std::strcmp(status, Lang::Strings::LISTENING) == 0) {
+        // Có wake → hủy hẹn sleepy, về neutral
+        in_standby_ = false;
+        if (std::strcmp(current_face_emotion_, "sleepy") == 0 ||
+            std::strcmp(current_face_emotion_, "neutral") != 0) {
+            ESP_LOGI(TAG, "auto face: listening -> neutral (wake up)");
+            current_face_emotion_ = "neutral";
+            DisplayLockGuard lock(this);
+            RenderFace();
+        }
+    }
 }
 
 void OledCustomEmojiDisplay::FaceTimerCallback(lv_timer_t* timer) {
@@ -477,7 +570,8 @@ void OledCustomEmojiDisplay::AnimateFaceTick() {
     bool need_render = false;
     ++frame_count_;
 
-    if (std::strcmp(current_face_emotion_, "sleepy") != 0) {
+    if (std::strcmp(current_face_emotion_, "sleepy") != 0 &&
+        std::strcmp(current_face_emotion_, "thinking") != 0) {
         if (blink_phase_ == 0 && frame_count_ >= next_blink_frame_) {
             blink_phase_ = 1;
             blink_closed_ = true;
@@ -639,8 +733,10 @@ void OledCustomEmojiDisplay::AnimateFaceTick() {
             int zi = (tick + i * 30) % 90;
             if (zi < 80) {
                 float zp = zi / 80.0f;
-                int zx  = 28 - (int)(zp * 24);
-                int zy  = 22 - (int)(zp * 22);
+                // int zx  = 28 - (int)(zp * 24);
+                // int zy  = 22 - (int)(zp * 22);
+                int zx  = 26 - (int)(zp * 22);
+                int zy  = 20 - (int)(zp * 20);
                 // Scale: 0.5x → 1.5x  (LVGL 9: 256 = 1.0x)
                 int scale = 128 + (int)(zp * 256);
 
@@ -654,6 +750,185 @@ void OledCustomEmojiDisplay::AnimateFaceTick() {
         }
 
         // need_render = true;
+    }
+
+        // ===== NEUTRAL (LISTENING) ANIMATION =====
+    if (std::strcmp(current_face_emotion_, "neutral") == 0 &&
+        left_eye_ && right_eye_ && left_pupil_ && right_pupil_ && !speaking_) {
+
+        neutral_anim_tick_++;
+
+        // === GAZE — nhanh hơn: mỗi mốc 8 tick (640ms) ===
+        static const int8_t kGazeTable[18] = {
+            0, -30, -60, -90, -100, -100, -100, -60, 0, 60,
+            100, 100, 100, 60, 0, 0, 0, 0
+        };
+        int gi = (neutral_anim_tick_ / 2) % 18;    // ⬅️ /10 → /8
+        int gaze = kGazeTable[gi];
+
+        // === MẮT ===
+        int base_w = 28, base_h = 36;
+        int size_diff = gaze / 15;
+        int left_w  = base_w + size_diff;
+        int left_h  = base_h + size_diff;
+        int right_w = base_w - size_diff;
+        int right_h = base_h - size_diff;
+        if (left_w  < 20) left_w  = 20;
+        if (left_h  < 28) left_h  = 28;
+        if (right_w < 20) right_w = 20;
+        if (right_h < 28) right_h = 28;
+
+        lv_obj_set_size(left_eye_,  left_w,  left_h);
+        lv_obj_set_size(right_eye_, right_w, right_h);
+
+        int left_x  = 40 - left_w  / 2;
+        int right_x = 88 - right_w / 2;
+
+        // === TRÒNG MẮT ===
+        int pupil_base = 10;
+        int pupil_diff = gaze / 22;
+        int lp_w = pupil_base + pupil_diff;
+        int lp_h = pupil_base + pupil_diff;
+        int rp_w = pupil_base - pupil_diff;
+        int rp_h = pupil_base - pupil_diff;
+        if (lp_w < 5) lp_w = 5;
+        if (lp_h < 5) lp_h = 5;
+        if (rp_w < 5) rp_w = 5;
+        if (rp_h < 5) rp_h = 5;
+
+        lv_obj_set_size(left_pupil_,  lp_w, lp_h);
+        lv_obj_set_size(right_pupil_, rp_w, rp_h);
+
+        int lp_range = left_w  - lp_w - 4;
+        int rp_range = right_w - rp_w - 4;
+        if (lp_range < 1) lp_range = 1;
+        if (rp_range < 1) rp_range = 1;
+        int lp_x = 2 + (gaze + 100) * lp_range / 200;
+        int rp_x = 2 + (gaze + 100) * rp_range / 200;
+        int lp_y = (left_h  - lp_h) / 2;
+        int rp_y = (right_h - rp_h) / 2;
+        lv_obj_set_pos(left_pupil_,  lp_x, lp_y);
+        lv_obj_set_pos(right_pupil_, rp_x, rp_y);
+
+        // === MẮT TUỘT XUỐNG ===
+        int left_y  = 15;
+        int right_y = 15;
+
+        if (eye_fall_state_ == 0) {
+            if (frame_count_ >= eye_fall_next_tick_) {
+                eye_fall_state_ = 1;
+                eye_fall_tick_  = 0;
+                eye_fall_side_  = ((neutral_anim_tick_ / 10) % 2 == 0) ? 1 : 2;
+            }
+        } else if (eye_fall_state_ == 1) {
+            eye_fall_tick_++;
+            int fall_y = eye_fall_tick_ / 2;
+            if (fall_y >= 15) {
+                fall_y = 15;
+                eye_fall_state_ = 2;
+                eye_fall_tick_  = 0;
+            }
+            if (eye_fall_side_ == 1) left_y  = 15 + fall_y;
+            else                     right_y = 15 + fall_y;
+        } else if (eye_fall_state_ == 2) {
+            eye_fall_tick_++;
+            int fall_y = 15 - (int)eye_fall_tick_ * 4;
+            if (fall_y <= 0) {
+                fall_y = 0;
+                eye_fall_state_ = 0;
+                eye_fall_side_  = 0;
+                eye_fall_next_tick_ = frame_count_ + 100 + (frame_count_ % 200);
+            }
+            if (eye_fall_side_ == 1) left_y  = 15 + fall_y;
+            else                     right_y = 15 + fall_y;
+        }
+
+        lv_obj_set_pos(left_eye_,  left_x,  left_y);
+        lv_obj_set_pos(right_eye_, right_x, right_y);
+
+        // === MIỆNG DI CHUYỂN THEO GAZE ===
+        // gaze = -100 → miệng dịch trái 5px
+        // gaze = +100 → miệng dịch phải 5px
+        int mouth_dx = gaze / 18;
+        mouth_pts_[0].x = 54 + mouth_dx;
+        mouth_pts_[1].x = 74 + mouth_dx;
+        mouth_pts_[0].y = 50;
+        mouth_pts_[1].y = 50;
+        lv_line_set_points(mouth_line_, mouth_pts_, 2);
+
+        need_render = true;
+    }
+
+        // ===== AUTO SLEEPY SAU KHI IDLE =====
+    // Test: 5 giây = 5 * 1000 / 80 = 62 tick
+    // Production (5 phút): đổi thành 3750
+    constexpr uint32_t kSleepyDelayTicks = 62;
+
+    if (in_standby_ &&
+        (frame_count_ - standby_enter_tick_) >= kSleepyDelayTicks &&
+        std::strcmp(current_face_emotion_, "sleepy") != 0) {
+        ESP_LOGI(TAG, "auto face: idle timeout -> sleepy");
+        current_face_emotion_ = "sleepy";
+        need_render = true;
+    }
+
+        // ===== THINKING ANIMATION =====
+    if (std::strcmp(current_face_emotion_, "thinking") == 0 &&
+        thinking_bulb_ && thinking_rays_[0]) {
+
+        thinking_anim_tick_++;
+
+        // ⬇️ Mắt trượt lên trong 20 tick (~1.6s)
+        int eye_y;
+        if (thinking_anim_tick_ < 20) {
+            eye_y = 15 - (thinking_anim_tick_ * 11 / 20);
+        } else {
+            eye_y = 4;
+        }
+        lv_obj_set_pos(left_eye_,  28, eye_y);
+        lv_obj_set_pos(right_eye_, 72, eye_y);
+
+        // Tia sáng nhấp nháy
+        for (int i = 0; i < 3; i++) {
+            int ph = (thinking_anim_tick_ + i * 3) % 16;
+            if (ph < 8) {
+                lv_obj_clear_flag(thinking_rays_[i], LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_add_flag(thinking_rays_[i], LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+
+        // ⬇️ Tròng mắt đảo qua lại sau khi đã lên đỉnh
+        // Sau tick 20, dùng bảng gaze giống neutral (mốc 8 tick)
+        static const int8_t kThinkGaze[10] = {
+            0, 60, 100, 100, 60, 0, -60, -100, -100, -60
+        };
+        int gaze_idx = 0;
+        if (thinking_anim_tick_ >= 20) {
+            gaze_idx = ((thinking_anim_tick_ - 20) / 8) % 10;
+        }
+        int gaze = kThinkGaze[gaze_idx];   // -100..+100
+
+        // Vị trí gốc của tròng khi mắt ở trên đỉnh
+        // (pupil trái 7x7 trong eye 24x32, pupil phải 11x11)
+        int lp_range = 24 - 7 - 4;   // = 13
+        int rp_range = 24 - 11 - 4;  // = 9
+        int lp_x = 2 + (gaze + 100) * lp_range / 200;
+        int rp_x = 2 + (gaze + 100) * rp_range / 200;
+
+        lv_obj_set_pos(left_pupil_,  lp_x, 2);
+        lv_obj_set_pos(right_pupil_, rp_x, 1);
+
+        // Miệng nghiêng theo gaze:
+        //   gaze = -100 (nhìn trái)  → miệng `\` (trái cao, phải thấp)
+        //   gaze = +100 (nhìn phải) → miệng `/` (trái thấp, phải cao)
+        int tilt_y = gaze * 4 / 100;    // -4..+4
+        mouth_pts_[0].x = 54;
+        mouth_pts_[1].x = 74;
+        mouth_pts_[0].y = 54 + tilt_y;  // đầu trái
+        mouth_pts_[1].y = 54 - tilt_y;  // đầu phải
+        lv_line_set_points(mouth_line_, mouth_pts_, 2);
+    
     }
 
 
@@ -700,6 +975,14 @@ void OledCustomEmojiDisplay::RenderFace() {
     if (sleepy_drool_)      lv_obj_add_flag(sleepy_drool_,      LV_OBJ_FLAG_HIDDEN);
     for (int i = 0; i < 3; i++) {
         if (sleepy_z_[i]) lv_obj_add_flag(sleepy_z_[i], LV_OBJ_FLAG_HIDDEN);
+    }
+
+    if (thinking_bulb_)       lv_obj_add_flag(thinking_bulb_,       LV_OBJ_FLAG_HIDDEN);
+    if (thinking_bulb_inner_) lv_obj_add_flag(thinking_bulb_inner_, LV_OBJ_FLAG_HIDDEN);
+    if (thinking_zap_)        lv_obj_add_flag(thinking_zap_,        LV_OBJ_FLAG_HIDDEN);
+    if (thinking_base_)       lv_obj_add_flag(thinking_base_,       LV_OBJ_FLAG_HIDDEN);
+    for (int i = 0; i < 3; i++) {
+        if (thinking_rays_[i]) lv_obj_add_flag(thinking_rays_[i], LV_OBJ_FLAG_HIDDEN);
     }
 
     if (strcmp(current_face_emotion_, "happy") == 0) {
@@ -778,26 +1061,49 @@ void OledCustomEmojiDisplay::RenderFace() {
         lv_obj_set_pos(angry_mark_root_, 98, 2);
         angry_anim_tick_ = 0;
 
-    } else {
-        // ===== NEUTRAL / mặc định: mắt bầu dục dọc + miệng ngang =====
-        lv_obj_clear_flag(left_eye_, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(right_eye_, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_size(left_eye_, 20, 28);
-        lv_obj_set_pos(left_eye_, 32, 18);
-        lv_obj_set_size(right_eye_, 20, 28);
-        lv_obj_set_pos(right_eye_, 76, 18);
-        lv_obj_clear_flag(left_pupil_, LV_OBJ_FLAG_HIDDEN);
+        } else if (strcmp(current_face_emotion_, "thinking") == 0) {
+        // Mắt bắt đầu từ vị trí neutral (y=15), AnimateFaceTick sẽ kéo lên dần
+        lv_obj_clear_flag(left_eye_,    LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(right_eye_,   LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(left_pupil_,  LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(right_pupil_, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_size(left_pupil_, 6, 6);
-        lv_obj_set_pos(left_pupil_, 7, 11);
-        lv_obj_set_size(right_pupil_, 6, 6);
-        lv_obj_set_pos(right_pupil_, 7, 11);
 
-        // Miệng: 2 gạch ngang ngắn
-        mouth_pts_[0] = {54, 50};
-        mouth_pts_[1] = {74, 50};
+        lv_obj_set_size(left_eye_,  24, 32);
+        lv_obj_set_pos(left_eye_,   26, 15);   // ⬅️ bắt đầu từ neutral, sẽ được slide lên
+        lv_obj_set_size(right_eye_, 24, 32);
+        lv_obj_set_pos(right_eye_,  74, 15);
+
+        lv_obj_set_size(left_pupil_,  7, 7);
+        lv_obj_set_pos(left_pupil_,   10, 2);
+        lv_obj_set_size(right_pupil_, 11, 11);
+        lv_obj_set_pos(right_pupil_,  7, 1);
+
+        mouth_pts_[0] = {54, 52};
+        mouth_pts_[1] = {74, 52};
         lv_line_set_points(mouth_line_, mouth_pts_, 2);
-        lv_obj_set_style_line_width(mouth_line_, 2, 0);
+        lv_obj_set_style_line_width(mouth_line_, 4, 0);
+        lv_obj_clear_flag(mouth_line_, LV_OBJ_FLAG_HIDDEN);
+
+        lv_obj_clear_flag(thinking_bulb_,       LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(thinking_bulb_inner_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(thinking_zap_,        LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(thinking_base_,       LV_OBJ_FLAG_HIDDEN);
+        for (int i = 0; i < 3; i++) {
+            lv_obj_clear_flag(thinking_rays_[i], LV_OBJ_FLAG_HIDDEN);
+        }
+        thinking_anim_tick_ = 0;
+
+    } else {
+        // --- NEUTRAL / LISTENING ---
+        lv_obj_clear_flag(left_eye_,   LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(right_eye_,  LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(left_pupil_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(right_pupil_,LV_OBJ_FLAG_HIDDEN);
+
+        // mouth_pts_[0] = {54, 50};
+        // mouth_pts_[1] = {74, 50};
+        lv_line_set_points(mouth_line_, mouth_pts_, 2);
+        lv_obj_set_style_line_width(mouth_line_, 4, 0);
         lv_obj_clear_flag(mouth_line_, LV_OBJ_FLAG_HIDDEN);
     }
         // ===== LIP-SYNC OVERRIDE =====
@@ -838,18 +1144,31 @@ void OledCustomEmojiDisplay::RenderFace() {
     }
 }
 
+
 void OledCustomEmojiDisplay::SetEmotion(const char* emotion) {
     if (emotion == nullptr || emotion[0] == '\0') emotion = "neutral";
 
     if (IsFaceMode() && face_root_ != nullptr) {
+        if (in_standby_ && std::strcmp(current_face_emotion_, "sleepy") == 0) {
+            return;
+        }
+
         const char* mapped = ResolveOledEmotionFromFolderProfile(emotion);
         if (mapped == nullptr) mapped = emotion;
-        current_face_emotion_ = robot_face::NormalizeEmotion(mapped);
+        const char* new_emotion = robot_face::NormalizeEmotion(mapped);
+
+        // ⬇️ Chỉ RenderFace khi emotion THỰC SỰ đổi
+        if (std::strcmp(current_face_emotion_, new_emotion) == 0) {
+            return;
+        }
+
+        current_face_emotion_ = new_emotion;
         ESP_LOGI(TAG, "face emotion '%s' -> '%s'", emotion, current_face_emotion_);
         DisplayLockGuard lock(this);
         RenderFace();
         return;
     }
+
 
     const char* oled_emotion = ResolveOledEmotionFromFolderProfile(emotion);
     if (oled_emotion != nullptr) {
