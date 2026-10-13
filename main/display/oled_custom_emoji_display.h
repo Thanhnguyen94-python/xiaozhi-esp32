@@ -21,6 +21,7 @@ public:
     void SetStatus(const char* status) override;
     void SetEmotion(const char* emotion) override;
     void SetChatMessage(const char* role, const char* content) override;
+    void ShowQRCode(const char* text, int duration_ms = 20000) override;
 
 private:
     lv_obj_t* face_root_ = nullptr;
@@ -69,6 +70,13 @@ private:
     lv_point_precise_t thinking_zap_pts_[4];
     lv_point_precise_t thinking_ray_pts_[3][2];
     uint32_t thinking_anim_tick_   = 0;
+
+    // QR code display
+    lv_obj_t* qr_container_ = nullptr;
+    lv_obj_t* qr_image_ = nullptr;
+    lv_image_dsc_t qr_image_dsc_{};
+    uint8_t* qr_buf_ = nullptr;
+    uint32_t qr_hide_tick_ = 0;
 
     // Bob animation
     lv_anim_t bob_anim_;
@@ -125,7 +133,9 @@ private:
     void SetupFaceUI_128x64();
     void RenderFace();
     void AnimateFaceTick();
+    void HideQR();
     static void FaceTimerCallback(lv_timer_t* timer);
+    
 };
 
 #endif // OLED_CUSTOM_EMOJI_DISPLAY_H

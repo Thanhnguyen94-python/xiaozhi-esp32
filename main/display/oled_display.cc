@@ -561,3 +561,8 @@ void OledDisplay::PinChatMessage(const char* content, int duration_ms) {
     ESP_LOGI(TAG, "Pinned chat: '%s' for %d ms", content ? content : "null", duration_ms);
 }
 
+void OledDisplay::ShowQRCode(const char* text, int duration_ms) {
+    // Base OledDisplay không có QR support
+    (void)text;
+    (void)duration_ms;
+}

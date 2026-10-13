@@ -54,6 +54,10 @@ void Display::PinChatMessage(const char* content, int duration_ms) {
     SetChatMessage("assistant", content);
 }
 
+void Display::ShowQRCode(const char* text, int duration_ms) {
+    // Default: no-op. Chỉ override ở display có màn hình face.
+}
+
 void Display::SetTheme(Theme* theme) {
     current_theme_ = theme;
     Settings settings("display", true);

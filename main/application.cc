@@ -911,7 +911,8 @@ void Application::InitializeProtocol() {
                             display->ShowNotification(hint, 9000);
                             if (!url.empty()) {
                                 std::string local_answer = "Địa chỉ WebUI: " + url;
-                                display->PinChatMessage(local_answer.c_str(), 10000);
+                                display->PinChatMessage(local_answer.c_str(), 20000);
+                                display->ShowQRCode(url.c_str(), 20000);
                             }
                         }
 
