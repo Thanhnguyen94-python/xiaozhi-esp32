@@ -196,7 +196,8 @@ private:
         boot_button_.OnClick([this]() {
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateStarting) {
-                EnterWifiConfigMode();
+                // ⬇️ Bọc trong Schedule để chạy trên main task, không phải esp_timer task
+                app.Schedule([this]() { EnterWifiConfigMode(); });
                 return;
             }
             app.ToggleChatState();

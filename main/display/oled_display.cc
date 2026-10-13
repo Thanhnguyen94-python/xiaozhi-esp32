@@ -10,6 +10,7 @@
 #include <esp_err.h>
 #include <esp_lvgl_port.h>
 #include <font_awesome.h>
+#include <esp_timer.h>
 
 #define TAG "OledDisplay"
 
@@ -161,6 +162,15 @@ void OledDisplay::Unlock() {
 
 void OledDisplay::SetChatMessage(const char* role, const char* content) {
     if (role_ == OledRole::kFaceOnly) return;
+    if (chat_pinned_) {
+        if (esp_timer_get_time() < chat_pin_until_us_) {
+            ESP_LOGD(TAG, "chat pinned, skip update");
+            return;
+        } else {
+            chat_pinned_ = false;
+            ESP_LOGI(TAG, "chat unpinned");
+        }
+    }
 
     DisplayLockGuard lock(this);
     if (chat_message_label_ == nullptr) {
@@ -534,3 +544,20 @@ void OledDisplay::SetTheme(Theme* theme) {
     auto screen = lv_screen_active();
     lv_obj_set_style_text_font(screen, text_font, 0);
 }
+void OledDisplay::PinChatMessage(const char* content, int duration_ms) {
+    if (role_ == OledRole::kFaceOnly) return;
+    if (chat_message_label_ == nullptr) return;
+
+    DisplayLockGuard lock(this);
+    chat_pinned_ = true;
+    chat_pin_until_us_ = esp_timer_get_time() + (int64_t)duration_ms * 1000;
+
+    std::string content_str = content ? content : "";
+    std::replace(content_str.begin(), content_str.end(), '\n', ' ');
+    lv_label_set_text(chat_message_label_, content_str.c_str());
+    if (content_right_ != nullptr) {
+        lv_obj_remove_flag(content_right_, LV_OBJ_FLAG_HIDDEN);
+    }
+    ESP_LOGI(TAG, "Pinned chat: '%s' for %d ms", content ? content : "null", duration_ms);
+}
+

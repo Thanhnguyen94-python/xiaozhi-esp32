@@ -37,6 +37,9 @@ protected:
     // vì 2 instance sẽ ghi đè lẫn nhau.
     lv_anim_t scroll_anim_;
 
+    bool chat_pinned_ = false;
+    int64_t chat_pin_until_us_ = 0;
+
     virtual bool Lock(int timeout_ms = 0) override;
     virtual void Unlock() override;
 
@@ -56,6 +59,7 @@ public:
 
     virtual void SetupUI() override;
     virtual void SetChatMessage(const char* role, const char* content) override;
+    virtual void PinChatMessage(const char* content, int duration_ms = 20000) override;
     virtual void SetEmotion(const char* emotion) override;
     virtual void SetTheme(Theme* theme) override;
     virtual void SetStatus(const char* status) override;

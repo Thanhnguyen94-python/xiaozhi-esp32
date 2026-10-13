@@ -72,6 +72,11 @@ void DualOledDisplay::SetChatMessage(const char* role, const char* content) {
     if (text_) text_->SetChatMessage(role, content);
 }
 
+// ⬇️⬇️⬇️ THÊM HÀM NÀY ⬇️⬇️⬇️
+void DualOledDisplay::PinChatMessage(const char* content, int duration_ms) {
+    if (text_) text_->PinChatMessage(content, duration_ms);
+}
+
 void DualOledDisplay::ClearChatMessages() {
     if (face_) face_->ClearChatMessages();
     if (text_) text_->ClearChatMessages();

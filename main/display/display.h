@@ -35,6 +35,7 @@ public:
     virtual void ShowNotification(const std::string &notification, int duration_ms = 3000);
     virtual void SetEmotion(const char* emotion);
     virtual void SetChatMessage(const char* role, const char* content);
+    virtual void PinChatMessage(const char* content, int duration_ms = 20000);
     virtual void ClearChatMessages();
     virtual void SetTheme(Theme* theme);
     virtual Theme* GetTheme() { return current_theme_; }
@@ -63,17 +64,20 @@ protected:
 
 class DisplayLockGuard {
 public:
-    DisplayLockGuard(Display *display) : display_(display) {
-        if (!display_->Lock(30000)) {
+    DisplayLockGuard(Display *display) : display_(display), locked_(false) {
+        locked_ = display_->Lock(3000);
+        if (!locked_) {
             ESP_LOGE("Display", "Failed to lock display");
         }
     }
     ~DisplayLockGuard() {
-        display_->Unlock();
+        if (locked_) {           // ⬅️ CHỈ Unlock nếu đã Lock thành công
+            display_->Unlock();
+        }
     }
-
 private:
     Display *display_;
+    bool locked_;
 };
 
 class NoDisplay : public Display {

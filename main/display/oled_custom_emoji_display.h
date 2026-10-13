@@ -20,6 +20,7 @@ public:
     void SetupUI() override;
     void SetStatus(const char* status) override;
     void SetEmotion(const char* emotion) override;
+    void SetChatMessage(const char* role, const char* content) override;
 
 private:
     lv_obj_t* face_root_ = nullptr;

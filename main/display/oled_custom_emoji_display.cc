@@ -43,7 +43,46 @@ const char* ResolveOledEmotionFromFolderProfile(const char* emotion) {
     if (oled_it == kFolderEmojiNameToOledEmotion.end()) return nullptr;
     return oled_it->second;
 }
-} // namespace
+}
+const char* DetectEmotionFromText(const char* text) {
+    if (text == nullptr || text[0] == '\0') return nullptr;
+
+    auto has = [text](const char* needle) {
+        return std::strstr(text, needle) != nullptr;
+    };
+
+    // ANGRY — từ chửi
+    if (has("đcm") || has("đkm") || has("Buồn đéo gì") || has("đờ cờ mờ") || has("đm ")|| has("Đờ mờ ") || has("chửi") ||
+        has("đéo") || has("vãi cả choá") || has("vcl") || has("vờ cờ lờ") || has("vkl") || has("vãi") ||
+        has("cặc") || has("địt") || has("bực thì bực") || has("Mệt vãi") ||
+        has("chửi") || has("bực mình") || has("bực hết cả choá") || has("tức không chịu nổi") || has("tức không chịu được")|| has("khó chịu")) {
+        return "angry";
+    }
+    // THINKING — đang tra cứu
+    if (has("Đợi tao tí") || has("Để tao xem") || has("Tao tìm xem") || has("Đợi tí")|| has("Tao tra đã")||
+        has("Để tao tra ") || has("tra cứu ")) {
+        return "thinking";
+    }
+    // SURPRISED — bất ngờ
+    if (has("trời ơi") || has("thật à") || has("sốc vãi") ||
+        has("vãi thiệt chứ") || has("kinh vãi") || has("gì cơ")) {
+        return "surprised";
+    }
+    // SAD
+    if (has("buồn") || has("tiếc") || has("khóc") || has("thất vọng")) {
+        return "sad";
+    }
+    // SLEEPY
+    if (has("mệt") || has("chán") || has("ngủ") || has("buồn ngủ")) {
+        return "sleepy";
+    }
+    // HAPPY
+    if (has("haha") || has("hehe") || has("vui") || has("mừng") ||
+        has("ngon") || has("được đấy")|| has("quá đã")) {
+        return "happy";
+    }
+    return nullptr;
+}
 
 // Tạo cung tròn mượt dùng lv_arc
 //   size       = đường kính của hình tròn ảo chứa cung
@@ -1176,4 +1215,27 @@ void OledCustomEmojiDisplay::SetEmotion(const char* emotion) {
         return;
     }
     OledDisplay::SetEmotion(emotion);
+}
+void OledCustomEmojiDisplay::SetChatMessage(const char* role, const char* content) {
+    // Log role để debug lần đầu — xem role name thực tế là gì
+    ESP_LOGI(TAG, "SetChatMessage role='%s'", role ? role : "null");
+
+    // Chỉ phân tích emotion khi ROBOT nói (role = "assistant" hoặc tương tự)
+    if (IsFaceMode() && face_root_ != nullptr &&
+        role != nullptr && content != nullptr &&
+        std::strcmp(role, "assistant") == 0) {
+
+        const char* override_emo = DetectEmotionFromText(content);
+        if (override_emo != nullptr &&
+            std::strcmp(current_face_emotion_, override_emo) != 0) {
+            ESP_LOGI(TAG, "override from text: '%s' (was '%s')",
+                     override_emo, current_face_emotion_);
+            current_face_emotion_ = override_emo;
+            DisplayLockGuard lock(this);
+            RenderFace();
+        }
+    }
+
+    // Gọi parent để giữ hành vi cũ (với face-only thì parent return sớm)
+    OledDisplay::SetChatMessage(role, content);
 }

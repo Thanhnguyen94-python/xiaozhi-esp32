@@ -48,6 +48,11 @@ void Display::SetChatMessage(const char* role, const char* content) {
 void Display::ClearChatMessages() {
     // Default empty implementation, override in subclasses if needed
 }
+void Display::PinChatMessage(const char* content, int duration_ms) {
+    // Default: gọi SetChatMessage bình thường (không pin)
+    // Subclass nào muốn hỗ trợ pin thì override
+    SetChatMessage("assistant", content);
+}
 
 void Display::SetTheme(Theme* theme) {
     current_theme_ = theme;
