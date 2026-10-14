@@ -148,6 +148,32 @@ constexpr const char* kWebUiHtml = R"HTML(
 
     /* Log box to hơn */
     .log-box { height: 200px !important; overflow-y: auto !important; }
+        /* Virtual Joystick */
+    .joystick-wrap {
+      display: flex; justify-content: center;
+      margin: 12px 0 8px 0;
+      touch-action: none;              /* chặn scroll khi kéo joystick */
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    #joyBase { touch-action: none; cursor: grab; }
+    #joyBase:active { cursor: grabbing; }
+    .joy-readout {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 2px 12px; font-family: monospace; font-size: 11px;
+      color: var(--text-dim); padding: 8px 12px;
+      background: #05080f; border-radius: 6px;
+      margin-top: 6px;
+    }
+    .joy-readout b { color: var(--accent); }
+    .joy-mode-toggle {
+      display: flex; gap: 12px; font-size: 12px;
+      color: var(--text-dim); margin-bottom: 10px;
+      justify-content: center;
+    }
+    .joy-mode-toggle label { cursor: pointer; user-select: none; }
+    .joy-mode-toggle input { margin-right: 3px; vertical-align: middle; }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
@@ -165,6 +191,11 @@ constexpr const char* kWebUiHtml = R"HTML(
     <!-- Card 1: Điều khiển chuyển động -->
     <div class="card">
       <div class="card-title">🎮 Điều khiển Bánh Xe</div>
+      <div class="joy-mode-toggle">
+        <label><input type="radio" name="joyMode" value="dpad"> D-pad</label>
+        <label><input type="radio" name="joyMode" value="joystick"> Joystick</label>
+        <label><input type="radio" name="joyMode" value="both" checked> Cả hai</label>
+      </div>
       <div class="dpad-container">
         <div></div>
         <button class="btn-cmd" onclick="sendCtrl('forward')">▲</button>
@@ -175,6 +206,27 @@ constexpr const char* kWebUiHtml = R"HTML(
         <div></div>
         <button class="btn-cmd" onclick="sendCtrl('backward')">▼</button>
         <div></div>
+      </div>
+            <!-- Virtual Joystick -->
+      <div class="joystick-wrap">
+        <svg id="joyBase" viewBox="-100 -100 200 200" width="200" height="200">
+          <circle cx="0" cy="0" r="90" fill="#0d1424"
+                  stroke="#1e2c4d" stroke-width="2"/>
+          <line x1="-90" y1="0" x2="90" y2="0"
+                stroke="#1e2c4d" stroke-width="1" opacity="0.45"/>
+          <line x1="0" y1="-90" x2="0" y2="90"
+                stroke="#1e2c4d" stroke-width="1" opacity="0.45"/>
+          <circle cx="0" cy="0" r="2" fill="#8a99ad"/>
+          <circle id="joyKnob" cx="0" cy="0" r="28"
+                  fill="rgba(0,210,255,0.35)"
+                  stroke="#00d2ff" stroke-width="2"/>
+        </svg>
+      </div>
+      <div class="joy-readout">
+        <div>x: <b><span id="joyX">0.00</span></b></div>
+        <div>y: <b><span id="joyY">0.00</span></b></div>
+        <div>L: <b><span id="joyL">0</span></b></div>
+        <div>R: <b><span id="joyR">0</span></b></div>
       </div>
         <!-- Card 5: Chat với Robot -->
         <div class="card" id="chatCard">
@@ -367,7 +419,7 @@ constexpr const char* kWebUiHtml = R"HTML(
 
       try {
         refreshStatus();
-        setInterval(refreshStatus, 3000);
+        
       } catch (e) { log('INIT STATUS ERROR: ' + e.message); }
     }
 
@@ -387,6 +439,7 @@ constexpr const char* kWebUiHtml = R"HTML(
           wsBackoff = 1000;
           log('WS connected');
           ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
+          refreshStatus();
         };
 
         ws.onmessage = (ev) => {
@@ -406,6 +459,43 @@ constexpr const char* kWebUiHtml = R"HTML(
             appendLogLine(msg.level, msg.msg, cls);
           } else if (msg.type === 'chat_reply') {
             addChatMsg('robot', msg.text);
+          } else if (msg.type === 'status') {
+            // Badge "Trạng thái" — 3 màu: Sẵn sàng / Đang chạy / Lỗi
+            if (typeof msg.wheel_ready === 'boolean') {
+                const el = $('stWheel');
+                const moving = (msg.left_speed !== 0 || msg.right_speed !== 0);
+
+                if (!msg.wheel_ready) {
+                    el.innerText = 'Lỗi';
+                    el.style.color = '#ff5252';
+                } else if (moving) {
+                    el.innerText = 'Đang chạy';
+                    el.style.color = '#00e676';
+                } else {
+                    el.innerText = 'Sẵn sàng';
+                    el.style.color = '#00d2ff';
+                }
+            }
+
+            if (typeof msg.left_speed === 'number' && typeof msg.right_speed === 'number') {
+                $('stSpeed').innerText = `${msg.left_speed}/${msg.right_speed}`;
+                if (!joystick || !joystick.active) {
+                    const lEl = document.getElementById('joyL');
+                    const rEl = document.getElementById('joyR');
+                    if (lEl) lEl.innerText = msg.left_speed;
+                    if (rEl) rEl.innerText = msg.right_speed;
+                }
+            }
+
+            if (typeof msg.volume === 'number') {
+                $('stVol').innerText = `${msg.volume}%`;
+            }
+          } else if (msg.type === 'motor') {
+            // Cập nhật readout + speed bar (silent — không log)
+            const lEl = document.getElementById('joyL');
+            const rEl = document.getElementById('joyR');
+            if (lEl) lEl.innerText = msg.left;
+            if (rEl) rEl.innerText = msg.right;
           } else if (msg.type === 'heartbeat') {
             /* silent */
           } else if (msg.type === 'hello' || msg.type === 'pong') {
@@ -428,6 +518,142 @@ constexpr const char* kWebUiHtml = R"HTML(
         console.error(e);
       }
     }
+        // ===== Virtual Joystick =====
+    function joyClamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+    class VirtualJoystick {
+      constructor() {
+        this.svg   = document.getElementById('joyBase');
+        this.knob  = document.getElementById('joyKnob');
+        if (!this.svg || !this.knob) return;
+
+        this.radius    = 62;     
+        this.deadzone  = 0.08;
+        this.active    = false;
+        this.pointerId = null;
+        this.x = 0; this.y = 0;
+        this.lastSendMs = 0;
+        this.sendInterval = 50; 
+        this.autoSendTimer = null;  
+
+        this.bind();
+      }
+
+      bind() {
+        this.svg.addEventListener('pointerdown',   e => this.onDown(e));
+        this.svg.addEventListener('pointermove',   e => this.onMove(e));
+        this.svg.addEventListener('pointerup',     e => this.onUp(e));
+        this.svg.addEventListener('pointercancel', e => this.onUp(e));
+      }
+
+      toLocal(e) {
+        const r = this.svg.getBoundingClientRect();
+        const cx = r.left + r.width  / 2;
+        const cy = r.top  + r.height / 2;
+        const scale = 200 / r.width;      // viewBox = 200x200
+        return { x: (e.clientX - cx) * scale,
+                 y: (e.clientY - cy) * scale };
+      }
+
+      onDown(e) {
+        if (this.active) return;
+        this.active    = true;
+        this.pointerId = e.pointerId;
+        try { this.svg.setPointerCapture(e.pointerId); } catch(_) {}
+        this.update(e);
+        this.startAutoSend();  
+        e.preventDefault();
+      }
+
+      onMove(e) {
+        if (!this.active || e.pointerId !== this.pointerId) return;
+        this.update(e);
+        e.preventDefault();
+      }
+
+      onUp(e) {
+        if (!this.active || e.pointerId !== this.pointerId) return;
+        this.active    = false;
+        this.pointerId = null;
+        try { this.svg.releasePointerCapture(e.pointerId); } catch(_) {}
+        this.stopAutoSend();
+        this.reset();
+      }
+
+      update(e) {
+        let p = this.toLocal(e);
+        const mag = Math.hypot(p.x, p.y);
+        if (mag > this.radius) {
+          p.x = p.x / mag * this.radius;
+          p.y = p.y / mag * this.radius;
+        }
+        // knob visual
+        this.knob.setAttribute('cx', p.x);
+        this.knob.setAttribute('cy', p.y);
+
+        // normalize [-1, 1]
+        let nx = p.x / this.radius;
+        let ny = p.y / this.radius;
+
+        // deadzone
+        if (Math.abs(nx) < this.deadzone) nx = 0;
+        if (Math.abs(ny) < this.deadzone) ny = 0;
+
+        // y đảo dấu: kéo lên trên màn hình = tiến = y dương
+        this.x =  nx;
+        this.y = -ny;
+
+        this.render();
+
+        // throttle send
+        const now = performance.now();
+        if (now - this.lastSendMs >= this.sendInterval) {
+          this.lastSendMs = now;
+          this.send();
+        }
+      }
+
+      reset() {
+        this.x = 0; this.y = 0;
+        this.knob.setAttribute('cx', 0);
+        this.knob.setAttribute('cy', 0);
+        this.render();
+        this.send();   // gửi (0,0) ngay lập tức
+      }
+      startAutoSend() {
+        if (this.autoSendTimer) return;
+        this.autoSendTimer = setInterval(() => {
+          if (this.active) this.send();
+        }, 150);   // 10Hz — đủ để reset watchdog 300ms
+      }
+
+      stopAutoSend() {
+        if (this.autoSendTimer) {
+          clearInterval(this.autoSendTimer);
+          this.autoSendTimer = null;
+        }
+      }
+
+      send() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({ type: 'vector', x: this.x, y: this.y }));
+      }
+
+      render() {
+        const l = Math.round(joyClamp(this.y + this.x, -1, 1) * 100);
+        const r = Math.round(joyClamp(this.y - this.x, -1, 1) * 100);
+        const xEl = document.getElementById('joyX');
+        const yEl = document.getElementById('joyY');
+        const lEl = document.getElementById('joyL');
+        const rEl = document.getElementById('joyR');
+        if (xEl) xEl.innerText = this.x.toFixed(2);
+        if (yEl) yEl.innerText = this.y.toFixed(2);
+        if (lEl) lEl.innerText = l;
+        if (rEl) rEl.innerText = r;
+      }
+    }
+
+    let joystick = null;
 
     // ===== Boot =====
     window.addEventListener('load', () => {
@@ -439,6 +665,33 @@ constexpr const char* kWebUiHtml = R"HTML(
       if (inp) inp.addEventListener('keydown', e => {
         if (e.key === 'Enter') sendChat();
       });
+      try {
+        joystick = new VirtualJoystick();
+        log('VirtualJoystick ready');
+      } catch (e) {
+        log('Joystick init error: ' + e.message);
+      }
+      // Mode toggle D-pad / Joystick
+      const dpadEl   = document.querySelector('.dpad-container');
+      const joyEl    = document.querySelector('.joystick-wrap');
+      const readEl   = document.querySelector('.joy-readout');
+
+      function applyMode(mode) {
+        if (!dpadEl || !joyEl) return;
+        dpadEl.classList.toggle('hidden', mode === 'joystick');
+        joyEl.classList.toggle('hidden',  mode === 'dpad');
+        if (readEl) readEl.classList.toggle('hidden', mode === 'dpad');
+        localStorage.setItem('joyMode', mode);
+      }
+
+      document.querySelectorAll('input[name="joyMode"]').forEach(r => {
+        r.addEventListener('change', e => applyMode(e.target.value));
+      });
+
+      const savedMode = localStorage.getItem('joyMode') || 'both';
+      applyMode(savedMode);
+      const savedRadio = document.querySelector(`input[name="joyMode"][value="${savedMode}"]`);
+      if (savedRadio) savedRadio.checked = true;
     });
   </script>
 
@@ -477,11 +730,14 @@ RobotWebUiServer::~RobotWebUiServer() {
 }
 
 void RobotWebUiServer::MotionStopTimerCallback(void* arg) {
-    auto* self = static_cast<RobotWebUiServer*>(arg);
-    if (self == nullptr || self->wheel_motor_ == nullptr) {
-        return;
-    }
-    self->wheel_motor_->Stop();
+  auto* self = static_cast<RobotWebUiServer*>(arg);
+  if (self == nullptr || self->wheel_motor_ == nullptr) {
+    return;
+  }
+  self->wheel_motor_->Stop();
+  self->current_left_speed_  = 0;
+  self->current_right_speed_ = 0;
+  self->BroadcastStatusNow();
 }
 
 void RobotWebUiServer::ArmMotionStopTimer(int duration_ms) {
@@ -581,6 +837,19 @@ bool RobotWebUiServer::Start(int port) {
             ESP_LOGI(TAG, "WebSocket ready at ws://<device-ip>:%d/ws", port);
         }
     }
+        // === PHASE 3: status broadcast task ===
+    BaseType_t st_ok = xTaskCreatePinnedToCore(
+        &RobotWebUiServer::StatusBroadcastTaskEntry,
+        "ws_status",
+        4096,
+        this,
+        tskIDLE_PRIORITY + 1,
+        &status_broadcast_task_,
+        0);
+    if (st_ok != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create ws_status task");
+        status_broadcast_task_ = nullptr;
+    }
     // === PHASE 2: hook log ESP-IDF → WS ===
     WsLogBroadcaster::GetInstance().Init([this](const char* json) { this->BroadcastJson(json); });
     // ================================================
@@ -642,21 +911,17 @@ esp_err_t RobotWebUiServer::ApiMusicHandler(httpd_req_t* req) {
     return self->HandleMusic(req);
 }
 
-esp_err_t RobotWebUiServer::HandleStatus(httpd_req_t* req) {
-    int left_speed = 0;
-    int right_speed = 0;
-    if (wheel_motor_ != nullptr) {
-        wheel_motor_->GetSpeed(left_speed, right_speed);
-    }
+void RobotWebUiServer::BuildStatusJson(std::string& out, bool include_type) {
+    int left_speed  = current_left_speed_;
+    int right_speed = current_right_speed_;
+    bool wheel_ready = (wheel_motor_ != nullptr) && wheel_motor_->IsReady();
 
-    int move_speed;
-    int turn_speed;
-    int step_ms;
+    int move_speed, turn_speed, step_ms;
     {
         std::lock_guard<std::mutex> lock(config_mutex_);
         move_speed = config_.move_speed;
         turn_speed = config_.turn_speed;
-        step_ms = config_.step_ms;
+        step_ms    = config_.step_ms;
     }
 
     int volume = 0;
@@ -666,22 +931,29 @@ esp_err_t RobotWebUiServer::HandleStatus(httpd_req_t* req) {
     }
 
     cJSON* root = cJSON_CreateObject();
-    cJSON_AddBoolToObject(root, "ok", true);
-    cJSON_AddBoolToObject(root, "wheel_ready", wheel_motor_ != nullptr && wheel_motor_->IsReady());
-    cJSON_AddNumberToObject(root, "left_speed", left_speed);
-    cJSON_AddNumberToObject(root, "right_speed", right_speed);
-    cJSON_AddNumberToObject(root, "move_speed", move_speed);
-    cJSON_AddNumberToObject(root, "turn_speed", turn_speed);
-    cJSON_AddNumberToObject(root, "step_ms", step_ms);
-    cJSON_AddNumberToObject(root, "volume", volume);
+    if (include_type) {
+        cJSON_AddStringToObject(root, "type", "status");
+    }
+    cJSON_AddBoolToObject(root,   "ok",           true);
+    cJSON_AddBoolToObject(root,   "wheel_ready",  wheel_ready);
+    cJSON_AddNumberToObject(root, "left_speed",   left_speed);
+    cJSON_AddNumberToObject(root, "right_speed",  right_speed);
+    cJSON_AddNumberToObject(root, "move_speed",   move_speed);
+    cJSON_AddNumberToObject(root, "turn_speed",   turn_speed);
+    cJSON_AddNumberToObject(root, "step_ms",      step_ms);
+    cJSON_AddNumberToObject(root, "volume",       volume);
 
     char* json_text = cJSON_PrintUnformatted(root);
-    std::string payload = json_text ? json_text : "{}";
+    out = json_text ? json_text : "{}";
     if (json_text != nullptr) {
         cJSON_free(json_text);
     }
     cJSON_Delete(root);
+}
 
+esp_err_t RobotWebUiServer::HandleStatus(httpd_req_t* req) {
+    std::string payload;
+    BuildStatusJson(payload, /*include_type=*/false);
     SendJson(req, 200, payload);
     return ESP_OK;
 }
@@ -811,21 +1083,31 @@ esp_err_t RobotWebUiServer::HandleControl(httpd_req_t* req) {
 
     bool handled = false;
 
-    if (wheel_motor_ != nullptr) {
+        if (wheel_motor_ != nullptr) {
         if (action == "forward") {
             wheel_motor_->Forward(move_speed);
+            current_left_speed_  = move_speed;
+            current_right_speed_ = move_speed;
             handled = true;
         } else if (action == "backward") {
             wheel_motor_->Backward(move_speed);
+            current_left_speed_  = -move_speed;
+            current_right_speed_ = -move_speed;
             handled = true;
         } else if (action == "left") {
             wheel_motor_->TurnLeft(turn_speed);
+            current_left_speed_  = -turn_speed;
+            current_right_speed_ = turn_speed;
             handled = true;
         } else if (action == "right") {
             wheel_motor_->TurnRight(turn_speed);
+            current_left_speed_  = turn_speed;
+            current_right_speed_ = -turn_speed;
             handled = true;
         } else if (action == "stop") {
             wheel_motor_->Stop();
+            current_left_speed_  = 0;
+            current_right_speed_ = 0;
             handled = true;
         }
     }
@@ -853,6 +1135,9 @@ esp_err_t RobotWebUiServer::HandleControl(httpd_req_t* req) {
         SendJson(req, 400,
                  "{\"ok\":false,\"message\":\"Unknown action or unavailable controller\"}");
         return ESP_OK;
+    }
+    if (handled) {
+        BroadcastStatusNow();
     }
 
     SendJson(req, 200, "{\"ok\":true,\"message\":\"Command accepted\"}");
@@ -986,6 +1271,10 @@ esp_err_t RobotWebUiServer::HandleWs(httpd_req_t* req) {
     if (ret == ESP_ERR_INVALID_STATE) {
         ESP_LOGI(TAG, "WS handshake done fd=%d (clients=%u)", fd,
                  static_cast<unsigned>(GetWsClientCount()));
+        last_left_speed_  = -999;
+        last_right_speed_ = -999;
+        last_volume_      = -999;
+        last_wheel_ready_ = false;
         WsSendTextToReq(req, "{\"type\":\"hello\",\"server\":\"robot-webui\",\"proto\":1}");
         return ESP_OK;
     }
@@ -1040,6 +1329,8 @@ void RobotWebUiServer::HandleWsText(int fd, const uint8_t* data, size_t len) {
         WsSendTextToFd(fd, reply);
     } else if (t == "chat") {
         HandleChat(fd, tmp, len);
+    } else if (t == "vector") {
+        HandleVectorCommand(fd, tmp, len);
     }
 
     cJSON_Delete(root);
@@ -1162,6 +1453,53 @@ void RobotWebUiServer::WsHeartbeatLoop() {
                  static_cast<unsigned long>(esp_timer_get_time() / 1000ULL),
                  static_cast<unsigned>(GetWsClientCount()));
         BroadcastJson(buf);
+    }
+}
+
+// ============================================================
+// PHASE 3: Status broadcast — poll 500ms, chỉ push khi thay đổi
+// ============================================================
+
+void RobotWebUiServer::StatusBroadcastTaskEntry(void* arg) {
+    static_cast<RobotWebUiServer*>(arg)->StatusBroadcastLoop();
+}
+
+void RobotWebUiServer::StatusBroadcastLoop() {
+    const TickType_t period = pdMS_TO_TICKS(kStatusPollMs);
+    TickType_t last_wake = xTaskGetTickCount();
+    std::string json;
+
+    while (true) {
+        vTaskDelayUntil(&last_wake, period);
+
+        if (GetWsClientCount() == 0) continue;
+
+        int left  = current_left_speed_;
+        int right = current_right_speed_;
+        bool ready = (wheel_motor_ != nullptr) && wheel_motor_->IsReady();
+
+        int vol = 0;
+        auto codec = Board::GetInstance().GetAudioCodec();
+        if (codec != nullptr) {
+            vol = codec->output_volume();
+        }
+
+        // Chỉ broadcast khi có thay đổi
+        if (left  == last_left_speed_  &&
+            right == last_right_speed_ &&
+            vol   == last_volume_      &&
+            ready == last_wheel_ready_) {
+            continue;
+        }
+
+        last_left_speed_  = left;
+        last_right_speed_ = right;
+        last_volume_      = vol;
+        last_wheel_ready_ = ready;
+
+        json.clear();
+        BuildStatusJson(json, /*include_type=*/true);
+        BroadcastJson(json);
     }
 }
 
@@ -1464,4 +1802,82 @@ void RobotWebUiServer::SendChatReply(int fd, const std::string& text, const std:
         cJSON_free(out);
     }
     cJSON_Delete(r);
+}
+void RobotWebUiServer::BroadcastStatusNow() {
+    if (GetWsClientCount() == 0) return;
+    std::string json;
+    BuildStatusJson(json, /*include_type=*/true);
+    BroadcastJson(json);
+}
+
+void RobotWebUiServer::SetSpeedsAndBroadcast(int l, int r) {
+    current_left_speed_  = l;
+    current_right_speed_ = r;
+    BroadcastStatusNow();
+}
+
+// ============================================================
+// JOYSTICK: vector (x, y) → differential drive
+// ============================================================
+
+void RobotWebUiServer::HandleVectorCommand(int fd, const char* json_text, size_t len) {
+    cJSON* root = cJSON_Parse(json_text);
+    if (root == nullptr) return;
+
+    cJSON* x_item = cJSON_GetObjectItem(root, "x");
+    cJSON* y_item = cJSON_GetObjectItem(root, "y");
+    if (!cJSON_IsNumber(x_item) || !cJSON_IsNumber(y_item)) {
+        cJSON_Delete(root);
+        return;
+    }
+
+    float x = static_cast<float>(x_item->valuedouble);
+    float y = static_cast<float>(y_item->valuedouble);
+    cJSON_Delete(root);
+
+    // Clamp về [-1, 1]
+    x = std::max(-1.0f, std::min(1.0f, x));
+    y = std::max(-1.0f, std::min(1.0f, y));
+
+    // RC override → từ chối (rate-limited warning 2s/lần)
+    if (rc_sbus::IsOverrideActive()) {
+        static uint32_t s_last_warn_ms = 0;
+        uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+        if (now_ms - s_last_warn_ms > 2000) {
+            s_last_warn_ms = now_ms;
+            WsSendTextToFd(fd,
+                "{\"type\":\"warning\",\"msg\":\"RC override active\"}");
+        }
+        return;
+    }
+
+    // Differential drive: left = y + x, right = y - x
+    float lf = y + x;
+    float rf = y - x;
+    lf = std::max(-1.0f, std::min(1.0f, lf));
+    rf = std::max(-1.0f, std::min(1.0f, rf));
+
+    int l100 = static_cast<int>(lf * 100.0f);
+    int r100 = static_cast<int>(rf * 100.0f);
+
+    if (wheel_motor_ != nullptr) {
+        wheel_motor_->SetSpeed(l100, r100);
+
+        // Cập nhật software-tracked speeds (để BuildStatusJson phản ánh đúng)
+        current_left_speed_  = l100;
+        current_right_speed_ = r100;
+
+        // Watchdog: nếu 300ms không có vector mới → auto-stop
+        ArmMotionStopTimer(800);
+        BroadcastStatusNow();
+    }
+
+    // Broadcast cho mọi client (multi-tab sync + hiển thị speed bar)
+    char buf[128];
+    snprintf(buf, sizeof(buf),
+             "{\"type\":\"motor\",\"left\":%d,\"right\":%d,\"source\":\"joystick\"}",
+             l100, r100);
+    BroadcastJson(buf);
+
+    // KHÔNG log gì ở đây — tránh spam 20Hz vào log box
 }

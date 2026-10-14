@@ -61,6 +61,24 @@ private:
     void      HandleChat(int fd, const char* json_text, size_t len);
     void      SendChatReply(int fd, const std::string& text, const std::string& tool);
     void      WsHeartbeatLoop();
+    static constexpr size_t kStatusPollMs = 500;
+
+    TaskHandle_t status_broadcast_task_ = nullptr;
+
+    // Cache để skip broadcast khi không đổi
+    int current_left_speed_  = 0;
+    int current_right_speed_ = 0;
+    int  last_left_speed_  = -999;
+    int  last_right_speed_ = -999;
+    int  last_volume_      = -999;
+    bool last_wheel_ready_ = false;
+
+    static void StatusBroadcastTaskEntry(void* arg);
+    void        StatusBroadcastLoop();
+    void        BuildStatusJson(std::string& out, bool include_type);
+    void        HandleVectorCommand(int fd, const char* json_text, size_t len);
+    void        BroadcastStatusNow();
+    void        SetSpeedsAndBroadcast(int l, int r);
 
     // Helpers
     bool WsIsRegistered(int fd);
