@@ -833,6 +833,7 @@ bool AudioService::PlayMp3(const std::string_view& mp3) {
 }
 
 bool AudioService::PlayOggFile(const char* path) {
+    ESP_LOGI(TAG, "PlayMp3File ENTER: %s", path ? path : "(null)");
     if (path == nullptr || path[0] == '\0') {
         return false;
     }
@@ -885,12 +886,14 @@ bool AudioService::PlayOggFile(const char* path) {
             }
         }
     }
-
+    ESP_LOGI(TAG, "PlayOggFile EXIT: stopped=%d, played_bytes=%u",
+             stop_playback_requested_.load(), (unsigned)ftell(fp));
     fclose(fp);
     return true;
 }
 
 bool AudioService::PlayMp3File(const char* path) {
+    ESP_LOGI(TAG, "PlayMp3File ENTER: %s", path ? path : "(null)");
     if (path == nullptr || path[0] == '\0') {
         return false;
     }
@@ -1064,6 +1067,8 @@ bool AudioService::PlayMp3File(const char* path) {
         esp_ae_rate_cvt_close(mp3_resampler);
     }
     esp_audio_simple_dec_close(decoder);
+    ESP_LOGI(TAG, "PlayMp3File EXIT: ok=%d, stopped=%d, played_bytes=%u",
+             ok, stop_playback_requested_.load(), (unsigned)ftell(fp));
     fclose(fp);
     return ok;
 }

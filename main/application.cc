@@ -1697,11 +1697,21 @@ bool Application::StartSdMusicPlaybackPath(const std::string& path) {
 }
 
 bool Application::StopSdCardMusic() {
-    std::lock_guard<std::mutex> lock(sd_music_mutex_);
-    sd_music_stop_requested_ = true;
-    sd_music_autoplay_next_ = false;
-    sd_music_active_.store(false);
-    audio_service_.RequestPlaybackStop();
+    {
+        std::lock_guard<std::mutex> lock(sd_music_mutex_);
+        sd_music_stop_requested_ = true;
+        sd_music_autoplay_next_ = false;
+        sd_music_active_.store(false);
+        audio_service_.RequestPlaybackStop();
+    }
+
+    auto codec = Board::GetInstance().GetAudioCodec();
+    if (codec != nullptr && codec->output_enabled()) {
+        ESP_LOGI(TAG, "Hard-stop: disabling codec output to flush DMA");
+        codec->EnableOutput(false);
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(80));
     return true;
 }
 
