@@ -70,6 +70,9 @@ private:
     int current_right_speed_ = 0;
     int  last_left_speed_  = -999;
     int  last_right_speed_ = -999;
+    int  last_macro_count_ = -1;
+    bool last_macro_rec_   = false;
+    bool last_macro_play_  = false;
     int  last_volume_      = -999;
     bool last_wheel_ready_ = false;
 
@@ -93,16 +96,51 @@ private:
     static esp_err_t ApiSettingsPostHandler(httpd_req_t* req);
     static esp_err_t ApiControlHandler(httpd_req_t* req);
     static esp_err_t ApiMusicHandler(httpd_req_t* req);
+    static esp_err_t ApiMacroStatusHandler(httpd_req_t* req);
 
     esp_err_t HandleStatus(httpd_req_t* req);
     esp_err_t HandleSettingsGet(httpd_req_t* req);
     esp_err_t HandleSettingsPost(httpd_req_t* req);
     esp_err_t HandleControl(httpd_req_t* req);
     esp_err_t HandleMusic(httpd_req_t* req);
+    esp_err_t HandleMacroStatus(httpd_req_t* req);
 
     static bool ReadRequestBody(httpd_req_t* req, std::string& out_body, size_t max_len = 2048);
     static void SendJson(httpd_req_t* req, int status_code, const std::string& json);
     static int Clamp(int value, int min_value, int max_value);
+    public:   // tạm để HTML handler gọi được — hoặc để private nếu chỉ internal
+    struct MacroStep {
+        std::string action;      // "forward"|"backward"|"left"|"right"|"stop"
+                                 // "head_nod"|"head_shake"|"head_curious"|"head_center"
+                                 // "vector"|"music_vuive"|"music_buon"|"music_stop"|"music_next"
+                                 // "chat"
+        int         p1 = 0;      // speed | vx*100 | 0
+        int         p2 = 0;      // duration_ms | vy*100 | 0
+        uint32_t    delay_ms = 0;
+        std::string text;        // cho chat
+    };
+
+    private:
+        static constexpr size_t kMacroMaxSteps = 100;
+        static constexpr uint32_t kMacroMaxDurationMs = 60000;
+
+        std::mutex           macro_mutex_;
+        std::vector<MacroStep> recorded_macro_;
+        bool                 macro_recording_ = false;
+        bool                 macro_playing_   = false;
+        bool                 macro_abort_     = false;
+        uint32_t             macro_start_ms_  = 0;
+        uint32_t             macro_last_step_ms_ = 0;
+        TaskHandle_t         macro_player_task_ = nullptr;
+
+        // Internal
+        void HandleMacroCommand(int fd, const char* json_text, size_t len);
+        void RecordMacroStep(const char* action, int p1, int p2,
+                            uint32_t delay_ms, const char* text = nullptr);
+        void MacroPlayerTaskEntryWrapper();
+        static void MacroPlayerTaskEntry(void* arg);
+        void ExecuteMacroStep(const MacroStep& step);
+        void BroadcastMacroStatus();
 };
 
 #endif // ROBOT_WEB_UI_SERVER_H

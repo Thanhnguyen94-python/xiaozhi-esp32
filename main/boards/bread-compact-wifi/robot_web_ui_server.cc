@@ -11,7 +11,7 @@
 #include <cJSON.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-
+#include <cmath>
 #include <algorithm>
 #include <cctype>
 #include <cstdarg>
@@ -174,6 +174,52 @@ constexpr const char* kWebUiHtml = R"HTML(
     .joy-mode-toggle label { cursor: pointer; user-select: none; }
     .joy-mode-toggle input { margin-right: 3px; vertical-align: middle; }
     .hidden { display: none !important; }
+
+        /* Macro */
+    .macro-main-btn {
+      display: block; width: 100%; padding: 14px;
+      border-radius: 10px; border: 2px solid var(--border);
+      background: #16223d; color: var(--text);
+      font-weight: 700; font-size: 15px; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .macro-main-btn.rec {
+      border-color: #ff5252; color: #ff5252;
+    }
+    .macro-main-btn.rec.active {
+      background: #ff5252; color: #fff;
+      box-shadow: 0 0 12px rgba(255,82,82,0.5);
+      animation: macroPulse 1.2s ease-in-out infinite;
+    }
+    @keyframes macroPulse {
+      0%,100% { box-shadow: 0 0 8px rgba(255,82,82,0.4); }
+      50%     { box-shadow: 0 0 20px rgba(255,82,82,0.9); }
+    }
+    .macro-main-btn.play {
+      border-color: #00e676; color: #00e676; margin-top: 8px;
+    }
+    .macro-main-btn.play.active {
+      background: #00e676; color: #000;
+      box-shadow: 0 0 12px rgba(0,230,118,0.6);
+    }
+    .macro-main-btn:disabled {
+      opacity: 0.35; cursor: not-allowed; filter: grayscale(1);
+    }
+    .macro-status {
+      font-family: monospace; font-size: 14px; font-weight: 600;
+      text-align: center; padding: 10px; margin: 12px 0;
+      background: #05080f; border-radius: 6px;
+      color: #8a99ad; transition: color 0.2s;
+    }
+    .macro-status.rec  { color: #ff5252; }
+    .macro-status.play { color: #00e676; }
+    .macro-clear-btn {
+      display: block; width: 100%; margin-top: 8px;
+      padding: 8px; border-radius: 8px;
+      border: 1px solid var(--border);
+      background: transparent; color: var(--text-dim);
+      font-size: 12px; cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -191,6 +237,19 @@ constexpr const char* kWebUiHtml = R"HTML(
     <!-- Card 1: Điều khiển chuyển động -->
     <div class="card">
       <div class="card-title">🎮 Điều khiển Bánh Xe</div>
+     
+        <!-- Card: Macro Record & Playback -->
+        <div class="card" id="macroCard">
+        <div class="card-title">🎬 Macro Record & Playback</div>
+
+        <button class="macro-main-btn rec" id="btnMacroRec">● Bắt đầu ghi</button>
+
+        <div class="macro-status" id="macroStatus">Chưa có macro</div>
+
+        <button class="macro-main-btn play" id="btnMacroPlay" disabled>▶ Phát lại</button>
+
+        <button class="macro-clear-btn" id="btnMacroClear">🗑 Xoá macro</button>
+        </div>
       <div class="joy-mode-toggle">
         <label><input type="radio" name="joyMode" value="dpad"> D-pad</label>
         <label><input type="radio" name="joyMode" value="joystick"> Joystick</label>
@@ -294,7 +353,7 @@ constexpr const char* kWebUiHtml = R"HTML(
     <script>
     // ===== Helpers =====
     const $ = id => document.getElementById(id);
-
+    let macroState = { recording: false, playing: false, count: 0 };
     function escapeHtml(s) {
       return String(s).replace(/[&<>"']/g, c => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -440,6 +499,7 @@ constexpr const char* kWebUiHtml = R"HTML(
           log('WS connected');
           ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
           refreshStatus();
+          fetchMacroStatusOnce();
         };
 
         ws.onmessage = (ev) => {
@@ -496,6 +556,11 @@ constexpr const char* kWebUiHtml = R"HTML(
             const rEl = document.getElementById('joyR');
             if (lEl) lEl.innerText = msg.left;
             if (rEl) rEl.innerText = msg.right;
+          } else if (msg.type === 'macro_status') {
+            macroState.recording = !!msg.recording;
+            macroState.playing   = !!msg.playing;
+            macroState.count     = msg.count || 0;
+            renderMacroStatus();
           } else if (msg.type === 'heartbeat') {
             /* silent */
           } else if (msg.type === 'hello' || msg.type === 'pong') {
@@ -655,6 +720,89 @@ constexpr const char* kWebUiHtml = R"HTML(
 
     let joystick = null;
 
+    let macroPoller = null;
+
+    function fetchMacroStatusOnce() {
+      fetch('/api/macro/status')
+        .then(r => r.json())
+        .then(msg => {
+          macroState.recording = !!msg.recording;
+          macroState.playing   = !!msg.playing;
+          macroState.count     = msg.count || 0;
+          renderMacroStatus();
+        })
+        .catch(() => {});
+    }
+
+    function startMacroPolling() {
+      if (macroPoller) return;
+      macroPoller = setInterval(fetchMacroStatusOnce, 1000);
+      fetchMacroStatusOnce();   // fetch ngay lập tức
+    }
+
+    function sendMacroCmd(cmd) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        log('WS chưa sẵn sàng');
+        return;
+      }
+      ws.send(JSON.stringify({ type: 'macro', cmd: cmd }));
+      log('macro → ' + cmd);
+
+      // Fetch state sau 150ms (server đã xử lý xong)
+      setTimeout(fetchMacroStatusOnce, 150);
+
+      // Bật polling khi vào chế độ active
+      if (cmd === 'start_rec' || cmd === 'play') {
+        startMacroPolling();
+      } else if (cmd === 'stop_rec' || cmd === 'stop_play' || cmd === 'clear') {
+        // Fetch vài lần để chắc chắn lấy state cuối, rồi tắt poll sau 2s
+        setTimeout(fetchMacroStatusOnce, 500);
+        setTimeout(() => {
+          fetchMacroStatusOnce();
+          if (macroPoller) { clearInterval(macroPoller); macroPoller = null; }
+        }, 1500);
+      }
+    }
+
+    function renderMacroStatus() {
+      const st      = document.getElementById('macroStatus');
+      const btnRec  = document.getElementById('btnMacroRec');
+      const btnPlay = document.getElementById('btnMacroPlay');
+      if (!st || !btnRec || !btnPlay) return;
+
+      const { recording: rec, playing: play, count: n } = macroState;
+
+      // Nút Record / Stop toggle
+      if (rec) {
+        btnRec.textContent = '■ Dừng ghi';
+        btnRec.classList.add('active');
+      } else {
+        btnRec.textContent = '● Bắt đầu ghi';
+        btnRec.classList.remove('active');
+      }
+
+      // Nút Play
+      btnPlay.textContent = play ? '■ Dừng phát' : '▶ Phát lại';
+      btnPlay.classList.toggle('active', play);
+      // Disable Play khi đang record hoặc chưa có macro
+      btnPlay.disabled = rec || (!play && n === 0);
+
+      // Status
+      if (rec) {
+        st.textContent = '● Đang ghi... (' + n + ' bước)';
+        st.className = 'macro-status rec';
+      } else if (play) {
+        st.textContent = '▶ Đang phát... (' + n + ' bước)';
+        st.className = 'macro-status play';
+      } else if (n > 0) {
+        st.textContent = '✓ Đã lưu ' + n + ' bước';
+        st.className = 'macro-status';
+      } else {
+        st.textContent = 'Chưa có macro';
+        st.className = 'macro-status';
+      }
+    }
+
     // ===== Boot =====
     window.addEventListener('load', () => {
       log('page loaded');
@@ -692,6 +840,24 @@ constexpr const char* kWebUiHtml = R"HTML(
       applyMode(savedMode);
       const savedRadio = document.querySelector(`input[name="joyMode"][value="${savedMode}"]`);
       if (savedRadio) savedRadio.checked = true;
+            // Macro buttons
+      const btnRec   = document.getElementById('btnMacroRec');
+      const btnPlay  = document.getElementById('btnMacroPlay');
+      const btnClear = document.getElementById('btnMacroClear');
+
+      if (btnRec) btnRec.addEventListener('click', () => {
+        if (macroState.recording) sendMacroCmd('stop_rec');
+        else                       sendMacroCmd('start_rec');
+      });
+
+      if (btnPlay) btnPlay.addEventListener('click', () => {
+        if (macroState.playing) sendMacroCmd('stop_play');
+        else                     sendMacroCmd('play');
+      });
+
+      if (btnClear) btnClear.addEventListener('click', () => sendMacroCmd('clear'));
+
+      renderMacroStatus();
     });
   </script>
 
@@ -807,6 +973,13 @@ bool RobotWebUiServer::Start(int port) {
         .handler = &RobotWebUiServer::ApiMusicHandler,
         .user_ctx = this,
     };
+    httpd_uri_t macro_status_uri = {
+        .uri      = "/api/macro/status",
+        .method   = HTTP_GET,
+        .handler  = &RobotWebUiServer::ApiMacroStatusHandler,
+        .user_ctx = this,
+    };
+    httpd_register_uri_handler(server_handle_, &macro_status_uri);
 
     httpd_register_uri_handler(server_handle_, &index_uri);
     httpd_register_uri_handler(server_handle_, &status_uri);
@@ -1129,6 +1302,25 @@ esp_err_t RobotWebUiServer::HandleControl(httpd_req_t* req) {
         ArmMotionStopTimer(duration_ms);
     }
 
+    // MACRO record
+    if (handled) {
+        std::lock_guard<std::mutex> lock(macro_mutex_);
+        if (macro_recording_) {
+            uint32_t now = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+            uint32_t delay = now - macro_last_step_ms_;
+            if (recorded_macro_.size() < kMacroMaxSteps &&
+                (now - macro_start_ms_) < kMacroMaxDurationMs) {
+                MacroStep s;
+                s.action = action;
+                s.p1 = (action == "forward" || action == "backward") ? move_speed : turn_speed;
+                s.p2 = duration_ms;
+                s.delay_ms = delay;
+                recorded_macro_.push_back(std::move(s));
+                macro_last_step_ms_ = now;
+            }
+        }
+    }
+
     cJSON_Delete(root);
 
     if (!handled) {
@@ -1276,6 +1468,7 @@ esp_err_t RobotWebUiServer::HandleWs(httpd_req_t* req) {
         last_volume_      = -999;
         last_wheel_ready_ = false;
         WsSendTextToReq(req, "{\"type\":\"hello\",\"server\":\"robot-webui\",\"proto\":1}");
+        BroadcastMacroStatus();
         return ESP_OK;
     }
 
@@ -1331,6 +1524,8 @@ void RobotWebUiServer::HandleWsText(int fd, const uint8_t* data, size_t len) {
         HandleChat(fd, tmp, len);
     } else if (t == "vector") {
         HandleVectorCommand(fd, tmp, len);
+    } else if (t == "macro") {
+        HandleMacroCommand(fd, tmp, len);
     }
 
     cJSON_Delete(root);
@@ -1427,7 +1622,7 @@ void RobotWebUiServer::BroadcastJson(const char* json) {
         esp_err_t err = httpd_ws_send_frame_async(server_handle_, fd, &frame);
         if (err != ESP_OK) {
             printf("[RobotWebUI] broadcast fd=%d err=%d\n", fd, err);
-            WsRemoveClient(fd);
+            // WsRemoveClient(fd);
         }
     }
 }
@@ -1500,6 +1695,32 @@ void RobotWebUiServer::StatusBroadcastLoop() {
         json.clear();
         BuildStatusJson(json, /*include_type=*/true);
         BroadcastJson(json);
+
+        // ─── Macro status dirty check ───
+        bool rec, play;
+        size_t mcount;
+        {
+            std::lock_guard<std::mutex> lock(macro_mutex_);
+            rec = macro_recording_;
+            play = macro_playing_;
+            mcount = recorded_macro_.size();
+        }
+        if ((int)mcount != last_macro_count_ ||
+            rec          != last_macro_rec_   ||
+            play         != last_macro_play_) {
+            last_macro_count_ = (int)mcount;
+            last_macro_rec_   = rec;
+            last_macro_play_  = play;
+
+            char mbuf[128];
+            snprintf(mbuf, sizeof(mbuf),
+                     "{\"type\":\"macro_status\",\"recording\":%s,"
+                     "\"playing\":%s,\"count\":%u}",
+                     rec  ? "true" : "false",
+                     play ? "true" : "false",
+                     (unsigned)mcount);
+            BroadcastJson(mbuf);
+        }
     }
 }
 
@@ -1788,6 +2009,22 @@ void RobotWebUiServer::HandleChat(int fd, const char* json_text, size_t len) {
          fd, text.c_str(), handled ? reply.c_str() : "unhandled");
 
     SendChatReply(fd, reply, tool);
+    {
+        std::lock_guard<std::mutex> lock(macro_mutex_);
+        if (macro_recording_) {
+            uint32_t now = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+            uint32_t delay = now - macro_last_step_ms_;
+            if (recorded_macro_.size() < kMacroMaxSteps &&
+                (now - macro_start_ms_) < kMacroMaxDurationMs) {
+                MacroStep s;
+                s.action = "chat";
+                s.text   = text;
+                s.delay_ms = delay;
+                recorded_macro_.push_back(std::move(s));
+                macro_last_step_ms_ = now;
+            }
+        }
+    }
 }
 
 void RobotWebUiServer::SendChatReply(int fd, const std::string& text, const std::string& tool) {
@@ -1878,6 +2115,311 @@ void RobotWebUiServer::HandleVectorCommand(int fd, const char* json_text, size_t
              "{\"type\":\"motor\",\"left\":%d,\"right\":%d,\"source\":\"joystick\"}",
              l100, r100);
     BroadcastJson(buf);
+    {
+        static uint32_t s_last_sample_ms = 0;
+        static float    s_last_x = 999.0f, s_last_y = 999.0f;
 
-    // KHÔNG log gì ở đây — tránh spam 20Hz vào log box
+        std::lock_guard<std::mutex> lock(macro_mutex_);
+        if (macro_recording_) {
+            uint32_t now = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+            bool big_change = (std::fabs(x - s_last_x) > 0.1f) ||
+                              (std::fabs(y - s_last_y) > 0.1f);
+            bool time_due   = (now - s_last_sample_ms) >= 200;
+
+            if ((big_change || time_due) &&
+                recorded_macro_.size() < kMacroMaxSteps &&
+                (now - macro_start_ms_) < kMacroMaxDurationMs) {
+                MacroStep s;
+                s.action = "vector";
+                s.p1 = static_cast<int>(x * 100.0f);
+                s.p2 = static_cast<int>(y * 100.0f);
+                s.delay_ms = now - macro_last_step_ms_;
+                recorded_macro_.push_back(std::move(s));
+                macro_last_step_ms_ = now;
+                s_last_sample_ms = now;
+                s_last_x = x;
+                s_last_y = y;
+            }
+        }
+    }
+}
+void RobotWebUiServer::HandleMacroCommand(int fd, const char* json_text, size_t len) {
+    cJSON* root = cJSON_Parse(json_text);
+    if (root == nullptr) return;
+
+    cJSON* cmd = cJSON_GetObjectItem(root, "cmd");
+    if (!cJSON_IsString(cmd) || cmd->valuestring == nullptr) {
+        cJSON_Delete(root);
+        return;
+    }
+
+    std::string c = cmd->valuestring;
+    cJSON_Delete(root);
+
+    if (c == "start_rec") {
+        bool did_start = false;
+        {
+            std::lock_guard<std::mutex> lock(macro_mutex_);
+            if (macro_recording_) return;
+            recorded_macro_.clear();
+            macro_recording_ = true;
+            macro_start_ms_  = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+            macro_last_step_ms_ = macro_start_ms_;
+            did_start = true;
+        }
+        if (did_start) {
+            ESP_LOGI(TAG, "Macro recording START");
+            // BroadcastMacroStatus();
+        }
+
+    } else if (c == "stop_rec") {
+        size_t count = 0;
+        {
+            std::lock_guard<std::mutex> lock(macro_mutex_);
+            macro_recording_ = false;
+            count = recorded_macro_.size();
+        }
+        // Force stop motor (đảm bảo robot dừng khi ngừng ghi)
+        if (wheel_motor_ != nullptr) {
+            wheel_motor_->Stop();
+            current_left_speed_ = 0;
+            current_right_speed_ = 0;
+            BroadcastStatusNow();
+        }
+        ESP_LOGI(TAG, "Macro recording STOP (%u steps)", (unsigned)count);
+        // BroadcastMacroStatus();
+
+    } else if (c == "play") {
+        bool can_play = false;
+        {
+            std::lock_guard<std::mutex> lock(macro_mutex_);
+            if (!macro_playing_ && !macro_recording_ && !recorded_macro_.empty()) {
+                macro_playing_ = true;
+                macro_abort_   = false;
+                can_play = true;
+            }
+        }
+        if (can_play && macro_player_task_ == nullptr) {
+            BaseType_t ok = xTaskCreatePinnedToCore(
+                &RobotWebUiServer::MacroPlayerTaskEntry,
+                "macro_play",
+                4096,
+                this,
+                tskIDLE_PRIORITY + 2,
+                &macro_player_task_,
+                0);
+            if (ok != pdPASS) {
+                std::lock_guard<std::mutex> lock(macro_mutex_);
+                macro_playing_ = false;
+                macro_player_task_ = nullptr;
+                ESP_LOGE(TAG, "Failed to create macro_play task");
+            } else {
+                ESP_LOGI(TAG, "Macro playback START");
+                // BroadcastMacroStatus();
+            }
+        }
+
+    } else if (c == "stop_play") {
+        {
+            std::lock_guard<std::mutex> lock(macro_mutex_);
+            macro_abort_ = true;
+        }
+        if (wheel_motor_ != nullptr) {
+            wheel_motor_->Stop();
+            current_left_speed_ = 0;
+            current_right_speed_ = 0;
+            BroadcastStatusNow();
+        }
+        ESP_LOGI(TAG, "Macro playback ABORT requested");
+
+    } else if (c == "clear") {
+        bool did_clear = false;
+        {
+            std::lock_guard<std::mutex> lock(macro_mutex_);
+            if (!macro_playing_ && !macro_recording_) {
+                recorded_macro_.clear();
+                did_clear = true;
+            }
+        }
+        if (did_clear) {
+            // BroadcastMacroStatus();
+        }
+    }
+}
+
+void RobotWebUiServer::RecordMacroStep(const char* action, int p1, int p2,
+                                       uint32_t delay_ms, const char* text) {
+    std::lock_guard<std::mutex> lock(macro_mutex_);
+    if (!macro_recording_) return;
+
+    uint32_t now = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+    if (recorded_macro_.size() >= kMacroMaxSteps) return;
+    if ((now - macro_start_ms_) >= kMacroMaxDurationMs) return;
+
+    MacroStep s;
+    s.action   = action ? action : "";
+    s.p1       = p1;
+    s.p2       = p2;
+    s.delay_ms = delay_ms;
+    s.text     = text ? text : "";
+    recorded_macro_.push_back(std::move(s));
+    macro_last_step_ms_ = now;
+}
+
+void RobotWebUiServer::BroadcastMacroStatus() {
+    if (GetWsClientCount() == 0) return;
+
+    bool rec, play;
+    size_t count;
+    {
+        std::lock_guard<std::mutex> lock(macro_mutex_);
+        rec = macro_recording_;
+        play = macro_playing_;
+        count = recorded_macro_.size();
+    }
+
+    char buf[128];
+    snprintf(buf, sizeof(buf),
+             "{\"type\":\"macro_status\",\"recording\":%s,\"playing\":%s,\"count\":%u}",
+             rec ? "true" : "false",
+             play ? "true" : "false",
+             (unsigned)count);
+    BroadcastJson(buf);
+}
+
+void RobotWebUiServer::MacroPlayerTaskEntry(void* arg) {
+    static_cast<RobotWebUiServer*>(arg)->MacroPlayerTaskEntryWrapper();
+}
+
+void RobotWebUiServer::MacroPlayerTaskEntryWrapper() {
+    // Snapshot để không giữ lock suốt quá trình playback
+    std::vector<MacroStep> steps;
+    {
+        std::lock_guard<std::mutex> lock(macro_mutex_);
+        steps = recorded_macro_;
+    }
+
+    ESP_LOGI(TAG, "Macro playback: %u steps", (unsigned)steps.size());
+
+    for (size_t i = 0; i < steps.size(); ++i) {
+        // Delay
+        if (steps[i].delay_ms > 0) {
+            uint32_t remain = steps[i].delay_ms;
+            while (remain > 0) {
+                uint32_t chunk = remain > 50 ? 50 : remain;
+                vTaskDelay(pdMS_TO_TICKS(chunk));
+                remain -= chunk;
+                if (macro_abort_) break;
+            }
+        }
+
+        bool abort = false;
+        {
+            std::lock_guard<std::mutex> lock(macro_mutex_);
+            abort = macro_abort_;
+        }
+        if (abort) break;
+
+        ExecuteMacroStep(steps[i]);
+    }
+
+    // Cleanup
+    {
+        std::lock_guard<std::mutex> lock(macro_mutex_);
+        macro_playing_ = false;
+        macro_abort_   = false;
+    }
+
+    if (wheel_motor_ != nullptr) {
+        wheel_motor_->Stop();
+        current_left_speed_  = 0;
+        current_right_speed_ = 0;
+        BroadcastStatusNow();
+    }
+
+    ESP_LOGI(TAG, "Macro playback DONE");
+    BroadcastMacroStatus();
+
+    vTaskDelete(nullptr);
+    // Không reset handle ở đây vì đã là task tự xoá
+}
+
+void RobotWebUiServer::ExecuteMacroStep(const MacroStep& s) {
+    if (s.action == "forward" && wheel_motor_) {
+        wheel_motor_->Forward(s.p1 > 0 ? s.p1 : 60);
+        ArmMotionStopTimer(s.p2 > 0 ? s.p2 : 350);
+        current_left_speed_  = s.p1;
+        current_right_speed_ = s.p1;
+    } else if (s.action == "backward" && wheel_motor_) {
+        wheel_motor_->Backward(s.p1 > 0 ? s.p1 : 60);
+        ArmMotionStopTimer(s.p2 > 0 ? s.p2 : 350);
+        current_left_speed_  = -s.p1;
+        current_right_speed_ = -s.p1;
+    } else if (s.action == "left" && wheel_motor_) {
+        wheel_motor_->TurnLeft(s.p1 > 0 ? s.p1 : 55);
+        ArmMotionStopTimer(s.p2 > 0 ? s.p2 : 350);
+    } else if (s.action == "right" && wheel_motor_) {
+        wheel_motor_->TurnRight(s.p1 > 0 ? s.p1 : 55);
+        ArmMotionStopTimer(s.p2 > 0 ? s.p2 : 350);
+    } else if (s.action == "stop" && wheel_motor_) {
+        wheel_motor_->Stop();
+        current_left_speed_  = 0;
+        current_right_speed_ = 0;
+    } else if (s.action == "head_nod" && head_servo_) {
+        head_servo_->nodYes();
+    } else if (s.action == "head_shake" && head_servo_) {
+        head_servo_->shakeNo();
+    } else if (s.action == "head_curious" && head_servo_) {
+        head_servo_->curiousHeadTilt();
+    } else if (s.action == "head_center" && head_servo_) {
+        head_servo_->RunAction("center");
+    } else if (s.action == "vector" && wheel_motor_) {
+        int l = s.p2 + s.p1;
+        int r = s.p2 - s.p1;
+        l = std::max(-100, std::min(100, l));
+        r = std::max(-100, std::min(100, r));
+        wheel_motor_->SetSpeed(l, r);
+        current_left_speed_  = l;
+        current_right_speed_ = r;
+        ArmMotionStopTimer(300);
+    } else if (s.action == "music_vuive") {
+        Application::GetInstance().PlaySdCardMusicByMood("vuive");
+    } else if (s.action == "music_buon") {
+        Application::GetInstance().PlaySdCardMusicByMood("buon");
+    } else if (s.action == "music_stop") {
+        Application::GetInstance().StopSdCardMusic();
+    } else if (s.action == "music_next") {
+        Application::GetInstance().PlayNextSdCardMusic();
+    } else if (s.action == "chat") {
+        // Replay chat command bằng cách gọi HandleChat internal
+        // Cần tạo JSON tạm
+        char tmp[256];
+        snprintf(tmp, sizeof(tmp), "{\"text\":\"%s\"}", s.text.c_str());
+        HandleChat(0, tmp, strlen(tmp));
+    }
+
+    BroadcastStatusNow();
+}
+esp_err_t RobotWebUiServer::ApiMacroStatusHandler(httpd_req_t* req) {
+    auto* self = static_cast<RobotWebUiServer*>(req->user_ctx);
+    return self->HandleMacroStatus(req);
+}
+
+esp_err_t RobotWebUiServer::HandleMacroStatus(httpd_req_t* req) {
+    bool rec, play;
+    size_t count;
+    {
+        std::lock_guard<std::mutex> lock(macro_mutex_);
+        rec   = macro_recording_;
+        play  = macro_playing_;
+        count = recorded_macro_.size();
+    }
+    char buf[160];
+    snprintf(buf, sizeof(buf),
+             "{\"recording\":%s,\"playing\":%s,\"count\":%u}",
+             rec  ? "true" : "false",
+             play ? "true" : "false",
+             (unsigned)count);
+    SendJson(req, 200, buf);
+    return ESP_OK;
 }
