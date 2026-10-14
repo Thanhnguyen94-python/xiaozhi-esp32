@@ -17,6 +17,8 @@
 #include <cstdarg>
 #include <cstring>
 #include <vector>
+#include <dirent.h>       
+#include <sys/stat.h>
 
 #define TAG "RobotWebUI"
 
@@ -220,6 +222,28 @@ constexpr const char* kWebUiHtml = R"HTML(
       background: transparent; color: var(--text-dim);
       font-size: 12px; cursor: pointer;
     }
+    
+    .macro-input-row {
+      display: flex; gap: 6px; margin-top: 8px; align-items: center;
+    }
+    #macroNameInput {
+      flex: 1; background: #111a2e; border: 1px solid var(--border);
+      color: var(--text); padding: 8px 10px; border-radius: 6px;
+      font-size: 13px; margin-bottom: 0;
+    }
+    .macro-mini-btn {
+      padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border);
+      background: #16223d; color: var(--text); cursor: pointer;
+      font-size: 12px; font-weight: 600;
+    }
+    .macro-mini-btn.save   { border-color: #00d2ff; color: #00d2ff; }
+    .macro-mini-btn.load   { border-color: #00e676; color: #00e676; }
+    .macro-mini-btn.del    { border-color: #ff5252; color: #ff5252; }
+    #macroSavedList {
+      width: 100%; margin-top: 8px; padding: 8px;
+      background: #111a2e; border: 1px solid var(--border);
+      color: var(--text); border-radius: 6px; font-size: 12px;
+    }
   </style>
 </head>
 <body>
@@ -247,6 +271,18 @@ constexpr const char* kWebUiHtml = R"HTML(
         <div class="macro-status" id="macroStatus">Chưa có macro</div>
 
         <button class="macro-main-btn play" id="btnMacroPlay" disabled>▶ Phát lại</button>
+
+        <div class="macro-input-row">
+            <input type="text" id="macroNameInput" placeholder="Tên macro (VD: demo_1)" maxlength="32" />
+            <button class="macro-mini-btn save" id="btnMacroSave">💾</button>
+        </div>
+        <select id="macroSavedList">
+            <option value="">-- Chưa có macro nào --</option>
+        </select>
+        <div class="macro-input-row">
+            <button class="macro-mini-btn load" id="btnMacroLoad" style="flex:1">📂 Tải</button>
+            <button class="macro-mini-btn del"  id="btnMacroDelete" style="flex:1">🗑 Xoá file</button>
+        </div>
 
         <button class="macro-clear-btn" id="btnMacroClear">🗑 Xoá macro</button>
         </div>
@@ -498,6 +534,7 @@ constexpr const char* kWebUiHtml = R"HTML(
           wsBackoff = 1000;
           log('WS connected');
           ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
+          ws.send(JSON.stringify({ type: 'macro', cmd: 'list' }));
           refreshStatus();
           fetchMacroStatusOnce();
         };
@@ -561,6 +598,12 @@ constexpr const char* kWebUiHtml = R"HTML(
             macroState.playing   = !!msg.playing;
             macroState.count     = msg.count || 0;
             renderMacroStatus();
+          
+          } else if (msg.type === 'macro_list') {
+            macroSavedList = msg.items || [];
+            updateMacroDropdown();
+          } else if (msg.type === 'macro_reply') {
+            log('macro reply: ' + msg.msg + (msg.ok ? ' OK' : ' FAIL'));
           } else if (msg.type === 'heartbeat') {
             /* silent */
           } else if (msg.type === 'hello' || msg.type === 'pong') {
@@ -802,6 +845,55 @@ constexpr const char* kWebUiHtml = R"HTML(
         st.className = 'macro-status';
       }
     }
+    
+    let macroSavedList = [];
+
+    function updateMacroDropdown() {
+      const sel = document.getElementById('macroSavedList');
+      if (!sel) return;
+      const cur = sel.value;
+      sel.innerHTML = '';
+      if (macroSavedList.length === 0) {
+        const o = document.createElement('option');
+        o.value = ''; o.textContent = '-- Chưa có macro nào --';
+        sel.appendChild(o);
+        return;
+      }
+      macroSavedList.forEach(n => {
+        const o = document.createElement('option');
+        o.value = n; o.textContent = n;
+        sel.appendChild(o);
+      });
+      if (macroSavedList.includes(cur)) sel.value = cur;
+    }
+
+    function sendMacroSave() {
+      const inp = document.getElementById('macroNameInput');
+      const name = (inp.value || '').trim();
+      if (!name) { log('Nhập tên macro trước'); return; }
+      if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+        log('Tên chỉ cho phép chữ, số, _, -'); return;
+      }
+      ws.send(JSON.stringify({ type: 'macro', cmd: 'save', name }));
+      log('macro → save ' + name);
+    }
+
+    function sendMacroLoad() {
+      const sel = document.getElementById('macroSavedList');
+      const name = sel.value;
+      if (!name) { log('Chọn macro để tải'); return; }
+      ws.send(JSON.stringify({ type: 'macro', cmd: 'load', name }));
+      log('macro → load ' + name);
+    }
+
+    function sendMacroDelete() {
+      const sel = document.getElementById('macroSavedList');
+      const name = sel.value;
+      if (!name) { log('Chọn macro để xoá'); return; }
+      if (!confirm('Xoá file macro "' + name + '"?')) return;
+      ws.send(JSON.stringify({ type: 'macro', cmd: 'delete', name }));
+      log('macro → delete ' + name);
+    }
 
     // ===== Boot =====
     window.addEventListener('load', () => {
@@ -858,6 +950,13 @@ constexpr const char* kWebUiHtml = R"HTML(
       if (btnClear) btnClear.addEventListener('click', () => sendMacroCmd('clear'));
 
       renderMacroStatus();
+
+      const btnMSave = document.getElementById('btnMacroSave');
+      const btnMLoad = document.getElementById('btnMacroLoad');
+      const btnMDel  = document.getElementById('btnMacroDelete');
+      if (btnMSave) btnMSave.addEventListener('click', sendMacroSave);
+      if (btnMLoad) btnMLoad.addEventListener('click', sendMacroLoad);
+      if (btnMDel)  btnMDel.addEventListener('click',  sendMacroDelete);
     });
   </script>
 
@@ -1469,6 +1568,7 @@ esp_err_t RobotWebUiServer::HandleWs(httpd_req_t* req) {
         last_wheel_ready_ = false;
         WsSendTextToReq(req, "{\"type\":\"hello\",\"server\":\"robot-webui\",\"proto\":1}");
         BroadcastMacroStatus();
+        BroadcastMacroList();
         return ESP_OK;
     }
 
@@ -2222,7 +2322,8 @@ void RobotWebUiServer::HandleMacroCommand(int fd, const char* json_text, size_t 
     } else if (c == "stop_play") {
         {
             std::lock_guard<std::mutex> lock(macro_mutex_);
-            macro_abort_ = true;
+            macro_abort_   = true;
+            macro_playing_ = false;   // ★ reset ngay, không chờ task cleanup
         }
         if (wheel_motor_ != nullptr) {
             wheel_motor_->Stop();
@@ -2244,6 +2345,17 @@ void RobotWebUiServer::HandleMacroCommand(int fd, const char* json_text, size_t 
         if (did_clear) {
             // BroadcastMacroStatus();
         }
+    } else if (c == "save" || c == "load" || c == "delete") {
+        // Parse lại JSON để lấy name (đã bị xoá ở trên)
+        cJSON* root2 = cJSON_Parse(json_text);
+        if (!root2) return;
+        if      (c == "save")   HandleMacroSave(fd, root2);
+        else if (c == "load")   HandleMacroLoad(fd, root2);
+        else if (c == "delete") HandleMacroDelete(fd, root2);
+        cJSON_Delete(root2);
+    } else if (c == "list") {
+        HandleMacroList(fd);
+    
     }
 }
 
@@ -2326,8 +2438,9 @@ void RobotWebUiServer::MacroPlayerTaskEntryWrapper() {
     // Cleanup
     {
         std::lock_guard<std::mutex> lock(macro_mutex_);
-        macro_playing_ = false;
-        macro_abort_   = false;
+        macro_playing_      = false;
+        macro_abort_        = false;
+        macro_player_task_  = nullptr;   // ★ QUAN TRỌNG: cho phép play lần sau
     }
 
     if (wheel_motor_ != nullptr) {
@@ -2422,4 +2535,266 @@ esp_err_t RobotWebUiServer::HandleMacroStatus(httpd_req_t* req) {
              (unsigned)count);
     SendJson(req, 200, buf);
     return ESP_OK;
+}
+// ============================================================
+// PHASE 6c: Persistence SD — save/load/delete/list macros
+// ============================================================
+
+bool RobotWebUiServer::IsValidMacroName(const std::string& name) {
+    if (name.empty() || name.size() > kMacroMaxNameLen) return false;
+    for (char c : name) {
+        // Chỉ cho phép chữ, số, gạch dưới, gạch ngang
+        if (!((c >= 'a' && c <= 'z') ||
+              (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') ||
+              c == '_' || c == '-')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string RobotWebUiServer::MacroFilePath(const std::string& name) {
+    return std::string(kMacroDir) + "/" + name + ".json";
+}
+
+bool RobotWebUiServer::SaveMacroToSd(const std::string& name) {
+    if (!IsValidMacroName(name)) return false;
+
+    std::vector<MacroStep> steps;
+    {
+        std::lock_guard<std::mutex> lock(macro_mutex_);
+        if (recorded_macro_.empty()) return false;
+        steps = recorded_macro_;
+    }
+
+    // Đảm bảo thư mục tồn tại
+    mkdir(kMacroDir, 0755);   // EEXIST OK
+
+    std::string path = MacroFilePath(name);
+    FILE* fp = fopen(path.c_str(), "w");
+    if (!fp) {
+        ESP_LOGW(TAG, "Cannot open for write: %s", path.c_str());
+        return false;
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "name", name.c_str());
+    cJSON_AddNumberToObject(root, "created_ms",
+        static_cast<double>(esp_timer_get_time() / 1000));
+
+    cJSON* arr = cJSON_AddArrayToObject(root, "steps");
+    for (const auto& s : steps) {
+        cJSON* o = cJSON_CreateObject();
+        cJSON_AddStringToObject(o, "action", s.action.c_str());
+        cJSON_AddNumberToObject(o, "p1", s.p1);
+        cJSON_AddNumberToObject(o, "p2", s.p2);
+        cJSON_AddNumberToObject(o, "delay_ms", s.delay_ms);
+        if (!s.text.empty()) {
+            cJSON_AddStringToObject(o, "text", s.text.c_str());
+        }
+        cJSON_AddItemToArray(arr, o);
+    }
+
+    char* txt = cJSON_PrintUnformatted(root);
+    bool ok = false;
+    if (txt != nullptr) {
+        size_t len = strlen(txt);
+        size_t w = fwrite(txt, 1, len, fp);
+        ok = (w == len);
+        cJSON_free(txt);
+    }
+    cJSON_Delete(root);
+    fclose(fp);
+
+    ESP_LOGI(TAG, "Macro save '%s': %s (%u steps)",
+             name.c_str(), ok ? "OK" : "FAIL", (unsigned)steps.size());
+    return ok;
+}
+
+bool RobotWebUiServer::LoadMacroFromSd(const std::string& name) {
+    if (!IsValidMacroName(name)) {
+        ESP_LOGW(TAG, "Load '%s': invalid name", name.c_str());
+        return false;
+    }
+
+    std::string path = MacroFilePath(name);
+    FILE* fp = fopen(path.c_str(), "r");
+    if (!fp) {
+        ESP_LOGW(TAG, "Load '%s': cannot open file", path.c_str());
+        return false;
+    }
+
+    fseek(fp, 0, SEEK_END);
+    long sz = ftell(fp);
+    if (sz <= 0 || sz > 64 * 1024) {
+        ESP_LOGW(TAG, "Load '%s': invalid size %ld", name.c_str(), sz);
+        fclose(fp);
+        return false;
+    }
+    fseek(fp, 0, SEEK_SET);
+    std::vector<char> buf(sz + 1);
+    size_t r = fread(buf.data(), 1, sz, fp);
+    fclose(fp);
+    buf[r] = '\0';
+
+    cJSON* root = cJSON_Parse(buf.data());
+    if (!root) {
+        ESP_LOGW(TAG, "Load '%s': JSON parse fail (len=%u)", name.c_str(), (unsigned)r);
+        return false;
+    }
+
+    cJSON* arr = cJSON_GetObjectItem(root, "steps");
+    if (!cJSON_IsArray(arr)) {
+        ESP_LOGW(TAG, "Load '%s': no steps array", name.c_str());
+        cJSON_Delete(root);
+        return false;
+    }
+
+    std::vector<MacroStep> new_steps;
+    int n = cJSON_GetArraySize(arr);
+    for (int i = 0; i < n && new_steps.size() < kMacroMaxSteps; ++i) {
+        cJSON* o = cJSON_GetArrayItem(arr, i);
+        if (!cJSON_IsObject(o)) continue;
+
+        MacroStep s;
+        cJSON* a = cJSON_GetObjectItem(o, "action");
+        cJSON* p1 = cJSON_GetObjectItem(o, "p1");
+        cJSON* p2 = cJSON_GetObjectItem(o, "p2");
+        cJSON* d  = cJSON_GetObjectItem(o, "delay_ms");
+        cJSON* t  = cJSON_GetObjectItem(o, "text");
+
+        s.action   = cJSON_IsString(a) ? a->valuestring : "";
+        s.p1       = cJSON_IsNumber(p1) ? p1->valueint : 0;
+        s.p2       = cJSON_IsNumber(p2) ? p2->valueint : 0;
+        s.delay_ms = cJSON_IsNumber(d)  ? (uint32_t)d->valueint : 0;
+        s.text     = cJSON_IsString(t)  ? t->valuestring : "";
+        new_steps.push_back(std::move(s));
+    }
+    cJSON_Delete(root);
+
+    size_t loaded = new_steps.size();
+    {
+        std::lock_guard<std::mutex> lock(macro_mutex_);
+        if (macro_recording_) {
+            ESP_LOGW(TAG, "Load '%s': busy (recording)", name.c_str());
+            return false;
+        }
+        if (macro_playing_) {
+            ESP_LOGW(TAG, "Load '%s': busy (playing)", name.c_str());
+            return false;
+        }
+        recorded_macro_   = std::move(new_steps);
+        last_macro_count_ = -1;
+    }
+
+    ESP_LOGI(TAG, "Macro load '%s': %u steps", name.c_str(), (unsigned)loaded);
+    return true;
+}
+
+bool RobotWebUiServer::DeleteMacroFromSd(const std::string& name) {
+    if (!IsValidMacroName(name)) return false;
+    std::string path = MacroFilePath(name);
+    int ret = remove(path.c_str());
+    ESP_LOGI(TAG, "Macro delete '%s': %s",
+             name.c_str(), ret == 0 ? "OK" : "FAIL");
+    return ret == 0;
+}
+
+std::vector<std::string> RobotWebUiServer::ListMacrosOnSd() {
+    std::vector<std::string> out;
+    DIR* d = opendir(kMacroDir);
+    if (d == nullptr) return out;
+
+    struct dirent* e;
+    while ((e = readdir(d)) != nullptr) {
+        if (e->d_name[0] == '.') continue;
+        std::string n = e->d_name;
+        if (n.size() > 5 && n.substr(n.size() - 5) == ".json") {
+            out.push_back(n.substr(0, n.size() - 5));
+        }
+    }
+    closedir(d);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+void RobotWebUiServer::HandleMacroSave(int fd, cJSON* root) {
+    cJSON* name = cJSON_GetObjectItem(root, "name");
+    if (!cJSON_IsString(name) || name->valuestring == nullptr) return;
+
+    bool ok = SaveMacroToSd(name->valuestring);
+
+    char reply[128];
+    snprintf(reply, sizeof(reply),
+             "{\"type\":\"macro_reply\",\"ok\":%s,\"msg\":\"save %s\"}",
+             ok ? "true" : "false", name->valuestring);
+    WsSendTextToFd(fd, reply);
+
+    if (ok) BroadcastMacroList();
+}
+
+void RobotWebUiServer::HandleMacroLoad(int fd, cJSON* root) {
+    cJSON* name = cJSON_GetObjectItem(root, "name");
+    if (!cJSON_IsString(name) || name->valuestring == nullptr) return;
+
+    bool ok = LoadMacroFromSd(name->valuestring);
+
+    char reply[128];
+    snprintf(reply, sizeof(reply),
+             "{\"type\":\"macro_reply\",\"ok\":%s,\"msg\":\"load %s\"}",
+             ok ? "true" : "false", name->valuestring);
+    WsSendTextToFd(fd, reply);
+
+    BroadcastMacroStatus();
+}
+
+void RobotWebUiServer::HandleMacroDelete(int fd, cJSON* root) {
+    cJSON* name = cJSON_GetObjectItem(root, "name");
+    if (!cJSON_IsString(name) || name->valuestring == nullptr) return;
+
+    bool ok = DeleteMacroFromSd(name->valuestring);
+
+    char reply[128];
+    snprintf(reply, sizeof(reply),
+             "{\"type\":\"macro_reply\",\"ok\":%s,\"msg\":\"delete %s\"}",
+             ok ? "true" : "false", name->valuestring);
+    WsSendTextToFd(fd, reply);
+
+    if (ok) BroadcastMacroList();
+}
+
+void RobotWebUiServer::HandleMacroList(int fd) {
+    auto names = ListMacrosOnSd();
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "type", "macro_list");
+    cJSON* arr = cJSON_AddArrayToObject(root, "items");
+    for (const auto& n : names) {
+        cJSON_AddItemToArray(arr, cJSON_CreateString(n.c_str()));
+    }
+    char* txt = cJSON_PrintUnformatted(root);
+    if (txt) {
+        WsSendTextToFd(fd, txt);
+        cJSON_free(txt);
+    }
+    cJSON_Delete(root);
+}
+
+void RobotWebUiServer::BroadcastMacroList() {
+    if (GetWsClientCount() == 0) return;
+    auto names = ListMacrosOnSd();
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "type", "macro_list");
+    cJSON* arr = cJSON_AddArrayToObject(root, "items");
+    for (const auto& n : names) {
+        cJSON_AddItemToArray(arr, cJSON_CreateString(n.c_str()));
+    }
+    char* txt = cJSON_PrintUnformatted(root);
+    if (txt) {
+        BroadcastJson(txt);
+        cJSON_free(txt);
+    }
+    cJSON_Delete(root);
 }

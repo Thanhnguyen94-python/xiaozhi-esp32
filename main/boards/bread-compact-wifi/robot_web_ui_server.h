@@ -11,6 +11,7 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <cJSON.h>
 
 class RobotWebUiServer {
 public:
@@ -19,8 +20,8 @@ public:
 
     bool Start(int port = 80);
     void Stop();
-    void   BroadcastJson(const char* json);
-    void   BroadcastJson(const std::string& json) { BroadcastJson(json.c_str()); }
+    void BroadcastJson(const char* json);
+    void BroadcastJson(const std::string& json) { BroadcastJson(json.c_str()); }
     size_t GetWsClientCount();
 
 private:
@@ -53,14 +54,14 @@ private:
 
     // Entry points cho httpd
     static esp_err_t WsHandlerEntry(httpd_req_t* req);
-    static void      WsHeartbeatTaskEntry(void* arg);
+    static void WsHeartbeatTaskEntry(void* arg);
 
     // Implementations
     esp_err_t HandleWs(httpd_req_t* req);
-    void      HandleWsText(int fd, const uint8_t* data, size_t len);
-    void      HandleChat(int fd, const char* json_text, size_t len);
-    void      SendChatReply(int fd, const std::string& text, const std::string& tool);
-    void      WsHeartbeatLoop();
+    void HandleWsText(int fd, const uint8_t* data, size_t len);
+    void HandleChat(int fd, const char* json_text, size_t len);
+    void SendChatReply(int fd, const std::string& text, const std::string& tool);
+    void WsHeartbeatLoop();
     static constexpr size_t kStatusPollMs = 500;
 
     TaskHandle_t status_broadcast_task_ = nullptr;
@@ -77,11 +78,27 @@ private:
     bool last_wheel_ready_ = false;
 
     static void StatusBroadcastTaskEntry(void* arg);
-    void        StatusBroadcastLoop();
-    void        BuildStatusJson(std::string& out, bool include_type);
-    void        HandleVectorCommand(int fd, const char* json_text, size_t len);
-    void        BroadcastStatusNow();
-    void        SetSpeedsAndBroadcast(int l, int r);
+    void StatusBroadcastLoop();
+    void BuildStatusJson(std::string& out, bool include_type);
+    static constexpr const char* kMacroDir         = "/sdcard/macros";
+    static constexpr size_t      kMacroMaxNameLen  = 32;
+
+    bool SaveMacroToSd(const std::string& name);
+    bool LoadMacroFromSd(const std::string& name);
+    bool DeleteMacroFromSd(const std::string& name);
+    std::vector<std::string> ListMacrosOnSd();
+
+    static bool IsValidMacroName(const std::string& name);
+    static std::string MacroFilePath(const std::string& name);
+
+    void HandleMacroSave(int fd, cJSON* root);
+    void HandleMacroLoad(int fd, cJSON* root);
+    void HandleMacroDelete(int fd, cJSON* root);
+    void HandleMacroList(int fd);
+    void BroadcastMacroList();
+    void HandleVectorCommand(int fd, const char* json_text, size_t len);
+    void BroadcastStatusNow();
+    void SetSpeedsAndBroadcast(int l, int r);
 
     // Helpers
     bool WsIsRegistered(int fd);
