@@ -1,6 +1,7 @@
 #include "robot_web_ui_server.h"
 #include "rc_sbus_controller.h"
 #include "ws_log_broadcaster.h"
+#include "web_auth.h"
 
 #include "application.h"
 #include "board.h"
@@ -27,1133 +28,1353 @@ namespace {
 
 constexpr const char* kWebUiHtml = R"HTML(
 <!doctype html>
-<html lang="vi">
+<html lang="vi" data-theme="dark" data-theme-pref="auto">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Xiaozhi Robot Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0a0f1a" />
+  <title>Xiaozhi Robot</title>
+  <script>
+    // Áp theme trước khi vẽ trang để không bị nháy màu
+    (function () {
+      try {
+        var p = localStorage.getItem('theme') || 'auto';
+        var d = p === 'auto' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : p;
+        document.documentElement.setAttribute('data-theme', d);
+        document.documentElement.setAttribute('data-theme-pref', p);
+      } catch (e) {}
+    })();
+  </script>
   <style>
-    :root {
-      --bg: #090d16;
-      --card-bg: rgba(20, 29, 51, 0.7);
-      --accent: #00d2ff;
-      --accent-glow: rgba(0, 210, 255, 0.3);
-      --ok: #00e676;
-      --danger: #ff5252;
-      --text: #e0e6ed;
-      --text-dim: #8a99ad;
-      --border: #1e2c4d;
+    /* ===== Theme tokens ===== */
+    :root, [data-theme=dark] {
+      --bg:#0a0f1a; --surface:#121a2b; --surface-2:#0e1524; --surface-3:#1a2540; --inset:#060a12;
+      --border:#22304f; --border-strong:#31446f;
+      --text:#e3e9f2; --text-dim:#8a99ad; --text-faint:#5b6a80;
+      --accent:#22c8f0; --accent-ink:#00141c; --accent-soft:rgba(34,200,240,.14);
+      --ok:#1fd67a; --ok-ink:#03150b; --ok-soft:rgba(31,214,122,.13);
+      --warn:#ffb547; --warn-soft:rgba(255,181,71,.13);
+      --danger:#ff5d5d; --danger-soft:rgba(255,93,93,.13);
+      --shadow:0 1px 2px rgba(0,0,0,.35);
+      --toast-shadow:0 10px 30px rgba(0,0,0,.45);
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
-    body { background: var(--bg); color: var(--text); min-height: 100vh; padding: 15px; }
+    [data-theme=light] {
+      --bg:#f1f4f8; --surface:#ffffff; --surface-2:#f6f8fb; --surface-3:#eaeff6; --inset:#f3f6fa;
+      --border:#d9e1ec; --border-strong:#c1cddc;
+      --text:#142033; --text-dim:#55647a; --text-faint:#8794a6;
+      --accent:#0a8bbd; --accent-ink:#ffffff; --accent-soft:rgba(10,139,189,.10);
+      --ok:#108a4b; --ok-ink:#ffffff; --ok-soft:rgba(16,138,75,.10);
+      --warn:#a96400; --warn-soft:rgba(169,100,0,.10);
+      --danger:#d23838; --danger-soft:rgba(210,56,56,.09);
+      --shadow:0 1px 3px rgba(20,32,51,.07);
+      --toast-shadow:0 10px 30px rgba(20,32,51,.18);
+    }
 
-    /* Top Bar Status */
-    header {
-      display: flex; justify-content: space-between; align-items: center;
-      background: var(--card-bg); border: 1px solid var(--border);
-      padding: 12px 20px; border-radius: 12px; backdrop-filter: blur(10px); margin-bottom: 15px;
+    * { box-sizing:border-box; margin:0; padding:0; }
+    html { -webkit-text-size-adjust:100%; }
+    body {
+      font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+      background:var(--bg); color:var(--text); min-height:100vh; padding-bottom:100px;
+      transition:background-color .2s,color .2s;
     }
-    .brand { font-size: 18px; font-weight: 700; color: var(--accent); display: flex; align-items: center; gap: 8px; }
-    .status-badges { display: flex; gap: 10px; flex-wrap: wrap; }
-    .badge { background: #111a2e; border: 1px solid var(--border); padding: 4px 10px; border-radius: 20px; font-size: 12px; color: var(--text-dim); }
-    .badge span { color: var(--accent); font-weight: bold; }
+    button, input, select { font:inherit; color:inherit; }
+    button { cursor:pointer; }
+    code { font:12px ui-monospace,Menlo,Consolas,monospace; background:var(--surface-3); padding:1px 5px; border-radius:4px; }
+    .wrap { max-width:1200px; margin:0 auto; padding:0 14px; }
+    .hidden { display:none !important; }
+    .muted { color:var(--text-dim); font-size:12px; }
 
-    /* Main Grid Layout */
-    .dashboard-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px;
+    /* ===== Top bar ===== */
+    .topbar { position:sticky; top:0; z-index:20; background:var(--bg); border-bottom:1px solid var(--border); }
+    .topbar-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 0 8px; }
+    .brand { font-weight:700; font-size:17px; display:flex; align-items:center; gap:8px; }
+    .conn { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--text-dim);
+      padding:3px 10px; border:1px solid var(--border); border-radius:99px; background:var(--surface); }
+    .conn .dot { width:8px; height:8px; border-radius:50%; background:var(--warn); }
+    .conn.ok .dot { background:var(--ok); box-shadow:0 0 0 3px var(--ok-soft); }
+    .conn.err .dot { background:var(--danger); }
+    .conn.wait .dot { animation:blink 1s infinite; }
+    @keyframes blink { 50% { opacity:.25; } }
+    .spacer { flex:1; }
+    .stats { display:flex; gap:6px; flex-wrap:wrap; }
+    .stat { font-size:12px; padding:3px 10px; border-radius:99px; background:var(--surface);
+      border:1px solid var(--border); color:var(--text-dim); white-space:nowrap; }
+    .stat b { color:var(--text); font-weight:600; margin-left:3px; font-variant-numeric:tabular-nums; }
+    .stat b.st-ok { color:var(--accent); } .stat b.st-run { color:var(--ok); } .stat b.st-err { color:var(--danger); }
+    .icon-btn { display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 10px; border-radius:8px;
+      border:1px solid var(--border); background:var(--surface); font-size:13px; }
+    .icon-btn:hover { border-color:var(--accent); }
+    .icon-btn svg { width:16px; height:16px; display:none; }
+    [data-theme-pref=auto] .ti-auto, [data-theme-pref=light] .ti-light, [data-theme-pref=dark] .ti-dark { display:block; }
+    @media (max-width:640px) {
+      .stats { order:5; width:100%; }
+      .icon-btn span { display:none; }
     }
-    .card {
-      background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px;
-      padding: 16px; backdrop-filter: blur(8px);
-    }
-    .card-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; color: var(--accent); display: flex; justify-content: space-between; }
 
-    /* D-Pad Controls */
-    .dpad-container { display: grid; grid-template-columns: repeat(3, 60px); gap: 8px; justify-content: center; margin: 15px 0; }
-    .btn-cmd {
-      background: #182544; border: 1px solid var(--border); color: var(--text);
-      border-radius: 10px; padding: 12px; font-weight: bold; cursor: pointer; transition: 0.15s;
-    }
-    .btn-cmd:active { background: var(--accent); color: #000; transform: scale(0.95); }
-    .btn-cmd.stop { background: rgba(255, 82, 82, 0.2); border-color: var(--danger); color: var(--danger); }
+    /* ===== Tabs ===== */
+    .tabs { display:flex; gap:2px; overflow-x:auto; scrollbar-width:none; margin-bottom:-1px; }
+    .tabs::-webkit-scrollbar { display:none; }
+    .tab { background:none; border:none; border-bottom:2px solid transparent; padding:9px 12px;
+      color:var(--text-dim); font-weight:600; white-space:nowrap; display:inline-flex; align-items:center; gap:6px; }
+    .tab:hover { color:var(--text); }
+    .tab[aria-selected=true] { color:var(--accent); border-bottom-color:var(--accent); }
+    .count { font-style:normal; font-size:10px; min-width:16px; height:16px; padding:0 4px; border-radius:8px;
+      background:var(--danger); color:#fff; display:inline-flex; align-items:center; justify-content:center; }
+    main { padding-top:14px; }
+    .panel { display:none; }
+    .panel.active { display:block; animation:fadein .15s ease-out; }
+    @keyframes fadein { from { opacity:0; } }
 
-    /* Quick Action Buttons */
-    .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .btn-action { background: #16223d; border: 1px solid var(--border); color: var(--text); padding: 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }
-    .btn-action:hover { border-color: var(--accent); }
+    /* ===== Grid & cards ===== */
+    .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); align-items:start; }
+    .span-2 { grid-column:span 2; }
+    @media (max-width:700px) { .span-2 { grid-column:auto; } .grid { grid-template-columns:1fr; } }
+    .card { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; box-shadow:var(--shadow); }
+    .card-h { display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+    .card-h h2 { font-size:15px; font-weight:650; flex:1; }
+    .pill { font-size:11px; padding:2px 8px; border-radius:99px; background:var(--warn-soft); color:var(--warn); font-weight:600; }
+    .sep { border-top:1px solid var(--border); margin:14px 0; }
+    .sec-title { font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--text-faint); font-weight:700; margin:2px 0 8px; }
 
-    /* Range Sliders */
-    .control-group { margin-bottom: 12px; }
-    .control-label { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-dim); margin-bottom: 4px; }
-    input[type=range] { width: 100%; accent-color: var(--accent); background: #111a2e; height: 6px; border-radius: 3px; }
-    input[type=text] { width: 100%; background: #111a2e; border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 8px; margin-bottom: 8px; }
+    /* ===== Buttons ===== */
+    .btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:10px 12px; border-radius:9px;
+      border:1px solid var(--border); background:var(--surface-3); font-size:13px; font-weight:500;
+      transition:border-color .15s,background-color .15s,transform .05s; }
+    .btn:hover { border-color:var(--accent); }
+    .btn:active { transform:scale(.97); }
+    .btn:disabled { opacity:.4; cursor:not-allowed; transform:none; filter:grayscale(1); }
+    .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:650; }
+    .btn.success { background:var(--ok); border-color:var(--ok); color:var(--ok-ink); font-weight:650; }
+    .btn.danger { background:var(--danger-soft); border-color:var(--danger); color:var(--danger); }
+    .btn.ghost { background:transparent; color:var(--text-dim); }
+    .btn.block { width:100%; }
+    .btn.sm { padding:6px 10px; font-size:12px; }
+    .btn-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 
-    /* Status Footer Log */
-    .log-box { font-family: monospace; font-size: 11px; color: var(--text-dim); background: #05080f; border-radius: 6px; padding: 8px; height: 120px; overflow-y: auto; margin-top: 10px; }
-     
-    /* Chat box */
-    #chatCard { grid-column: 1 / -1 !important; }
-    #chatMessages {
-      display: flex;
-      flex-direction: column;
-      height: 220px;
-      overflow-y: auto;
-      background: #05080f;
-      border-radius: 6px;
-      padding: 10px;
-      margin-bottom: 10px;
-      font-size: 13px;
-    }
-    .chat-msg-user,
-    .chat-msg-robot,
-    .chat-msg-sys {
-      max-width: 80%;
-      padding: 6px 10px;
-      border-radius: 10px;
-      margin-bottom: 8px;
-      word-wrap: break-word;
-      line-height: 1.4;
-    }
-    .chat-msg-user {
-      align-self: flex-end;
-      background: rgba(0, 210, 255, 0.15);
-      border: 1px solid rgba(0, 210, 255, 0.4);
-      color: #00d2ff;
-      text-align: right;
-    }
-    .chat-msg-robot {
-      align-self: flex-start;
-      background: rgba(0, 230, 118, 0.10);
-      border: 1px solid rgba(0, 230, 118, 0.3);
-      color: #00e676;
-      text-align: left;
-    }
-    .chat-msg-sys {
-      align-self: center;
-      color: #888;
-      font-style: italic;
-      font-size: 11px;
-      background: transparent;
-      border: none;
-    }
-    .chat-msg-time { color: #555; font-size: 10px; }
-    #chatInputRow   { display: flex; gap: 8px; }
-    #chatInput      { flex: 1; margin-bottom: 0; }
-    #btnChatSend    { background: var(--accent); color: #000; font-weight: bold;
-                      padding: 8px 18px; border-radius: 8px; border: none; cursor: pointer; }
+    /* ===== Inputs ===== */
+    .input { width:100%; background:var(--surface-2); border:1px solid var(--border); border-radius:9px;
+      padding:9px 12px; outline:none; transition:border-color .15s,box-shadow .15s; }
+    .input:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+    .input.bad { border-color:var(--danger); box-shadow:0 0 0 3px var(--danger-soft); }
+    .field { margin-bottom:12px; }
+    .lbl { display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:13px; color:var(--text-dim); margin-bottom:5px; }
+    .lbl output { color:var(--text); font-weight:600; font-variant-numeric:tabular-nums; }
+    input[type=range] { width:100%; accent-color:var(--accent); }
+    .row { display:flex; gap:8px; align-items:center; }
+    .row > .input { flex:1; }
+    .two { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .two .muted { display:block; margin-bottom:3px; }
+    .err-box { color:var(--danger); font-size:12px; background:var(--danger-soft); border-radius:8px; padding:8px 10px; margin-bottom:10px; }
 
-    /* Log levels */
-    .log-info  { color: #8a99ad; }
-    .log-warn  { color: #ffb74d; }
-    .log-error { color: #ff5252; }
-    .log-debug { color: #666;    }
-    .log-sys   { color: #00d2ff; }
+    /* Segmented control */
+    .seg { display:flex; background:var(--surface-2); border:1px solid var(--border); border-radius:10px; padding:3px; gap:2px; }
+    .seg label { flex:1; text-align:center; font-size:12px; font-weight:600; padding:6px 8px; border-radius:7px; cursor:pointer; color:var(--text-dim); user-select:none; }
+    .seg input { position:absolute; opacity:0; pointer-events:none; }
+    .seg label.on { background:var(--surface-3); color:var(--text); box-shadow:var(--shadow); }
 
-    /* Log box to hơn */
-    .log-box { height: 200px !important; overflow-y: auto !important; }
-        /* Virtual Joystick */
-    .joystick-wrap {
-      display: flex; justify-content: center;
-      margin: 12px 0 8px 0;
-      touch-action: none;              /* chặn scroll khi kéo joystick */
-      user-select: none;
-      -webkit-user-select: none;
-    }
-    #joyBase { touch-action: none; cursor: grab; }
-    #joyBase:active { cursor: grabbing; }
-    .joy-readout {
-      display: grid; grid-template-columns: 1fr 1fr;
-      gap: 2px 12px; font-family: monospace; font-size: 11px;
-      color: var(--text-dim); padding: 8px 12px;
-      background: #05080f; border-radius: 6px;
-      margin-top: 6px;
-    }
-    .joy-readout b { color: var(--accent); }
-    .joy-mode-toggle {
-      display: flex; gap: 12px; font-size: 12px;
-      color: var(--text-dim); margin-bottom: 10px;
-      justify-content: center;
-    }
-    .joy-mode-toggle label { cursor: pointer; user-select: none; }
-    .joy-mode-toggle input { margin-right: 3px; vertical-align: middle; }
-    .hidden { display: none !important; }
+    /* Switch */
+    .sw-row { display:flex; align-items:center; gap:10px; padding:6px 0; }
+    .sw { flex:1; display:flex; align-items:center; gap:10px; cursor:pointer; font-size:14px; }
+    .sw input { appearance:none; -webkit-appearance:none; width:38px; height:22px; border-radius:99px; flex-shrink:0;
+      background:var(--surface-3); border:1px solid var(--border-strong); position:relative; cursor:pointer; transition:background-color .15s; }
+    .sw input::after { content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%;
+      background:var(--text-dim); transition:transform .15s,background-color .15s; }
+    .sw input:checked { background:var(--accent); border-color:var(--accent); }
+    .sw input:checked::after { transform:translateX(16px); background:#fff; }
+    .sw input:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 
-        /* Macro */
-    .macro-main-btn {
-      display: block; width: 100%; padding: 14px;
-      border-radius: 10px; border: 2px solid var(--border);
-      background: #16223d; color: var(--text);
-      font-weight: 700; font-size: 15px; cursor: pointer;
-      transition: all 0.15s;
-    }
-    .macro-main-btn.rec {
-      border-color: #ff5252; color: #ff5252;
-    }
-    .macro-main-btn.rec.active {
-      background: #ff5252; color: #fff;
-      box-shadow: 0 0 12px rgba(255,82,82,0.5);
-      animation: macroPulse 1.2s ease-in-out infinite;
-    }
-    @keyframes macroPulse {
-      0%,100% { box-shadow: 0 0 8px rgba(255,82,82,0.4); }
-      50%     { box-shadow: 0 0 20px rgba(255,82,82,0.9); }
-    }
-    .macro-main-btn.play {
-      border-color: #00e676; color: #00e676; margin-top: 8px;
-    }
-    .macro-main-btn.play.active {
-      background: #00e676; color: #000;
-      box-shadow: 0 0 12px rgba(0,230,118,0.6);
-    }
-    .macro-main-btn:disabled {
-      opacity: 0.35; cursor: not-allowed; filter: grayscale(1);
-    }
-    .macro-status {
-      font-family: monospace; font-size: 14px; font-weight: 600;
-      text-align: center; padding: 10px; margin: 12px 0;
-      background: #05080f; border-radius: 6px;
-      color: #8a99ad; transition: color 0.2s;
-    }
-    .macro-status.rec  { color: #ff5252; }
-    .macro-status.play { color: #00e676; }
-    .macro-clear-btn {
-      display: block; width: 100%; margin-top: 8px;
-      padding: 8px; border-radius: 8px;
-      border: 1px solid var(--border);
-      background: transparent; color: var(--text-dim);
-      font-size: 12px; cursor: pointer;
-    }
-    
-    .macro-input-row {
-      display: flex; gap: 6px; margin-top: 8px; align-items: center;
-    }
-    #macroNameInput {
-      flex: 1; background: #111a2e; border: 1px solid var(--border);
-      color: var(--text); padding: 8px 10px; border-radius: 6px;
-      font-size: 13px; margin-bottom: 0;
-    }
-    .macro-mini-btn {
-      padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border);
-      background: #16223d; color: var(--text); cursor: pointer;
-      font-size: 12px; font-weight: 600;
-    }
-    .macro-mini-btn.save   { border-color: #00d2ff; color: #00d2ff; }
-    .macro-mini-btn.load   { border-color: #00e676; color: #00e676; }
-    .macro-mini-btn.del    { border-color: #ff5252; color: #ff5252; }
-    #macroSavedList {
-      width: 100%; margin-top: 8px; padding: 8px;
-      background: #111a2e; border: 1px solid var(--border);
-      color: var(--text); border-radius: 6px; font-size: 12px;
-    }
+    /* Help hints */
+    .help { width:20px; height:20px; border-radius:50%; border:1px solid var(--border); background:var(--surface-2);
+      color:var(--text-dim); font-size:12px; font-weight:700; flex-shrink:0; line-height:1; }
+    .help:hover, .help[aria-expanded=true] { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+    .hint { font-size:12px; color:var(--text-dim); background:var(--inset); border-left:3px solid var(--accent);
+      padding:8px 10px; border-radius:0 8px 8px 0; margin:2px 0 10px; line-height:1.5; }
+    .hint.warn { border-left-color:var(--warn); color:var(--warn); }
+    .alert { font-size:12px; line-height:1.5; color:var(--warn); background:var(--warn-soft); border:1px solid var(--warn);
+      border-radius:10px; padding:10px 12px; margin-bottom:12px; }
+
+    /* ===== Drive ===== */
+    .drive { display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:22px; margin:16px 0 8px; }
+    .dpad { display:grid; grid-template-columns:repeat(3,58px); grid-template-rows:repeat(3,58px); gap:6px; }
+    .dpad button { border-radius:12px; border:1px solid var(--border); background:var(--surface-3); font-size:18px;
+      transition:background-color .1s,transform .05s; user-select:none; -webkit-user-select:none; }
+    .dpad button:hover { border-color:var(--accent); }
+    .dpad button:active, .dpad button.pressed { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); transform:scale(.95); }
+    .dpad button.stop { background:var(--danger-soft); border-color:var(--danger); color:var(--danger); }
+    .dpad button.stop:active, .dpad button.stop.pressed { background:var(--danger); color:#fff; }
+    .joy { touch-action:none; user-select:none; -webkit-user-select:none; }
+    #joyBase { display:block; cursor:grab; touch-action:none; }
+    #joyBase.active { cursor:grabbing; }
+    .joy-ring { fill:var(--surface-2); stroke:var(--border-strong); stroke-width:2; }
+    .joy-axis { stroke:var(--border); stroke-width:1; }
+    .joy-center { fill:var(--text-faint); }
+    #joyKnob { fill:var(--accent-soft); stroke:var(--accent); stroke-width:2.5; }
+    #joyBase.active #joyKnob { fill:var(--accent); fill-opacity:.45; }
+    .readout { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; font:12px ui-monospace,Menlo,Consolas,monospace; }
+    .readout div { background:var(--inset); border-radius:7px; padding:6px 8px; text-align:center; color:var(--text-dim); }
+    .readout b { color:var(--accent); }
+    .kbd { font:11px ui-monospace,Menlo,Consolas,monospace; padding:1px 5px; border:1px solid var(--border);
+      border-bottom-width:2px; border-radius:4px; background:var(--surface-2); }
+    .keys { margin-top:10px; text-align:center; }
+
+    /* ===== Macro ===== */
+    .macro-main-btn { display:block; width:100%; padding:13px; border-radius:10px; border:2px solid var(--border);
+      background:var(--surface-3); font-weight:700; font-size:15px; transition:all .15s; }
+    .macro-main-btn.rec { border-color:var(--danger); color:var(--danger); }
+    .macro-main-btn.rec.active { background:var(--danger); color:#fff; animation:macroPulse 1.2s ease-in-out infinite; }
+    @keyframes macroPulse { 0%,100% { box-shadow:0 0 6px var(--danger-soft); } 50% { box-shadow:0 0 18px var(--danger); } }
+    .macro-main-btn.play { border-color:var(--ok); color:var(--ok); }
+    .macro-main-btn.play.active { background:var(--ok); color:var(--ok-ink); }
+    .macro-main-btn:disabled { opacity:.35; cursor:not-allowed; filter:grayscale(1); }
+    .macro-status { font:600 14px ui-monospace,Menlo,Consolas,monospace; text-align:center; padding:10px; margin:10px 0;
+      background:var(--inset); border-radius:8px; color:var(--text-dim); }
+    .macro-status.rec { color:var(--danger); } .macro-status.play { color:var(--ok); }
+
+    /* ===== Chat ===== */
+    #chatMessages { display:flex; flex-direction:column; gap:8px; height:min(52vh,440px); overflow-y:auto;
+      background:var(--inset); border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:10px; }
+    .msg { max-width:82%; padding:7px 11px; border-radius:12px; overflow-wrap:anywhere; }
+    .msg .meta { font-size:10.5px; color:var(--text-faint); margin-bottom:2px; }
+    .msg.user { align-self:flex-end; background:var(--accent-soft); border-bottom-right-radius:4px; }
+    .msg.user .meta b { color:var(--accent); }
+    .msg.robot { align-self:flex-start; background:var(--ok-soft); border-bottom-left-radius:4px; }
+    .msg.robot .meta b { color:var(--ok); }
+    .msg.sys { align-self:center; text-align:center; color:var(--text-dim); font-style:italic; font-size:12px; background:none; }
+    .chips { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+    .chip { font-size:12px; padding:4px 10px; border-radius:99px; border:1px solid var(--border); background:var(--surface-2); }
+    .chip:hover { border-color:var(--accent); color:var(--accent); }
+
+    /* ===== Log ===== */
+    .log-tools { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
+    .log-tools select { width:auto; padding:6px 10px; }
+    .log-tools label { font-size:12px; color:var(--text-dim); display:flex; gap:6px; align-items:center; cursor:pointer; }
+    .log-box { font:12px/1.55 ui-monospace,Menlo,Consolas,monospace; background:var(--inset); border:1px solid var(--border);
+      border-radius:10px; padding:10px; height:min(62vh,560px); overflow-y:auto; white-space:pre-wrap; word-break:break-word; }
+    .log-info { color:var(--text-dim); } .log-warn { color:var(--warn); } .log-error { color:var(--danger); }
+    .log-debug { color:var(--text-faint); } .log-sys { color:var(--accent); }
+
+    /* ===== Password ===== */
+    .pw { position:relative; }
+    .pw .input { padding-right:46px; }
+    .pw-eye { position:absolute; right:4px; top:50%; transform:translateY(-50%); width:38px; height:32px; border:none;
+      background:none; color:var(--text-dim); border-radius:7px; display:flex; align-items:center; justify-content:center; }
+    .pw-eye:hover { color:var(--accent); background:var(--accent-soft); }
+    .pw-eye svg { width:18px; height:18px; }
+    .pw-eye .ic-off { display:none; }
+    .pw-eye[aria-pressed=true] .ic-on { display:none; }
+    .pw-eye[aria-pressed=true] .ic-off { display:block; }
+    .meter { height:4px; border-radius:2px; background:var(--surface-3); margin-top:7px; overflow:hidden; }
+    .meter i { display:block; height:100%; width:0; background:var(--danger); transition:width .2s,background-color .2s; }
+    .pw-info { display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-dim); margin-top:4px; }
+    .match { font-size:12px; margin-top:5px; min-height:18px; }
+    .match.ok { color:var(--ok); } .match.bad { color:var(--danger); }
+
+    /* ===== E-stop & toasts ===== */
+    .estop { position:fixed; right:16px; bottom:calc(16px + env(safe-area-inset-bottom)); z-index:30; width:66px; height:66px;
+      border-radius:50%; border:3px solid rgba(255,255,255,.35); background:#e53935; color:#fff; font-weight:800; font-size:12px;
+      letter-spacing:.03em; box-shadow:0 6px 18px rgba(229,57,53,.45); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px; }
+    .estop span { font-size:18px; line-height:1; }
+    .estop:active { transform:scale(.93); }
+    #toasts { position:fixed; left:50%; top:76px; transform:translateX(-50%); z-index:40; display:flex; flex-direction:column;
+      gap:8px; align-items:center; pointer-events:none; width:min(92vw,420px); }
+    .toast { width:100%; background:var(--surface); border:1px solid var(--border); border-left:4px solid var(--accent);
+      padding:10px 14px; border-radius:10px; box-shadow:var(--toast-shadow); font-size:13px; animation:tin .2s ease-out; }
+    .toast.ok { border-left-color:var(--ok); } .toast.err { border-left-color:var(--danger); } .toast.warn { border-left-color:var(--warn); }
+    .toast.out { opacity:0; transform:translateY(-6px); transition:opacity .25s,transform .25s; }
+    @keyframes tin { from { opacity:0; transform:translateY(-8px); } }
+    @media (prefers-reduced-motion:reduce) { *, *::before, *::after { animation:none !important; transition:none !important; } }
   </style>
 </head>
 <body>
 
-  <header>
-    <div class="brand">🤖 Xiaozhi UI</div>
-    <div class="status-badges">
-      <div class="badge">Bánh xe: <span id="stWheel">--</span></div>
-      <div class="badge">Tốc độ L/R: <span id="stSpeed">0/0</span></div>
-      <div class="badge">Âm lượng: <span id="stVol">0%</span></div>
-    </div>
-  </header>
-
-  <div class="dashboard-grid">
-    <!-- Card 1: Điều khiển chuyển động -->
-    <div class="card">
-      <div class="card-title">🎮 Điều khiển Bánh Xe</div>
-     
-        <!-- Card: Macro Record & Playback -->
-        <div class="card" id="macroCard">
-        <div class="card-title">🎬 Macro Record & Playback</div>
-
-        <button class="macro-main-btn rec" id="btnMacroRec">● Bắt đầu ghi</button>
-
-        <div class="macro-status" id="macroStatus">Chưa có macro</div>
-
-        <button class="macro-main-btn play" id="btnMacroPlay" disabled>▶ Phát lại</button>
-
-        <div class="macro-input-row">
-            <input type="text" id="macroNameInput" placeholder="Tên macro (VD: demo_1)" maxlength="32" />
-            <button class="macro-mini-btn save" id="btnMacroSave">💾</button>
-        </div>
-        <select id="macroSavedList">
-            <option value="">-- Chưa có macro nào --</option>
-        </select>
-        <div class="macro-input-row">
-            <button class="macro-mini-btn load" id="btnMacroLoad" style="flex:1">📂 Tải</button>
-            <button class="macro-mini-btn del"  id="btnMacroDelete" style="flex:1">🗑 Xoá file</button>
-        </div>
-
-        <button class="macro-clear-btn" id="btnMacroClear">🗑 Xoá macro</button>
-        </div>
-      <div class="joy-mode-toggle">
-        <label><input type="radio" name="joyMode" value="dpad"> D-pad</label>
-        <label><input type="radio" name="joyMode" value="joystick"> Joystick</label>
-        <label><input type="radio" name="joyMode" value="both" checked> Cả hai</label>
+<header class="topbar">
+  <div class="wrap">
+    <div class="topbar-row">
+      <div class="brand">🤖 Xiaozhi</div>
+      <div class="conn wait" id="conn" role="status"><i class="dot"></i><span id="connText">Đang kết nối…</span></div>
+      <div class="spacer"></div>
+      <div class="stats">
+        <div class="stat">Bánh xe<b id="stWheel">--</b></div>
+        <div class="stat">L/R<b id="stSpeed">0/0</b></div>
+        <div class="stat">Âm lượng<b id="stVol">0%</b></div>
       </div>
-      <div class="dpad-container">
-        <div></div>
-        <button class="btn-cmd" onclick="sendCtrl('forward')">▲</button>
-        <div></div>
-        <button class="btn-cmd" onclick="sendCtrl('left')">◀</button>
-        <button class="btn-cmd stop" onclick="sendCtrl('stop')">■</button>
-        <button class="btn-cmd" onclick="sendCtrl('right')">▶</button>
-        <div></div>
-        <button class="btn-cmd" onclick="sendCtrl('backward')">▼</button>
-        <div></div>
-      </div>
-            <!-- Virtual Joystick -->
-      <div class="joystick-wrap">
-        <svg id="joyBase" viewBox="-100 -100 200 200" width="200" height="200">
-          <circle cx="0" cy="0" r="90" fill="#0d1424"
-                  stroke="#1e2c4d" stroke-width="2"/>
-          <line x1="-90" y1="0" x2="90" y2="0"
-                stroke="#1e2c4d" stroke-width="1" opacity="0.45"/>
-          <line x1="0" y1="-90" x2="0" y2="90"
-                stroke="#1e2c4d" stroke-width="1" opacity="0.45"/>
-          <circle cx="0" cy="0" r="2" fill="#8a99ad"/>
-          <circle id="joyKnob" cx="0" cy="0" r="28"
-                  fill="rgba(0,210,255,0.35)"
-                  stroke="#00d2ff" stroke-width="2"/>
-        </svg>
-      </div>
-      <div class="joy-readout">
-        <div>x: <b><span id="joyX">0.00</span></b></div>
-        <div>y: <b><span id="joyY">0.00</span></b></div>
-        <div>L: <b><span id="joyL">0</span></b></div>
-        <div>R: <b><span id="joyR">0</span></b></div>
-      </div>
-        
+      <button class="icon-btn" id="themeBtn" type="button" title="Đổi giao diện">
+        <svg class="ti-auto" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg>
+        <svg class="ti-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="ti-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        <span>Tự động</span>
+      </button>
     </div>
-
-    <!-- Card: Gọi robot & Hệ thống -->
-    <div class="card" id="sysCard">
-      <div class="card-title">🤖 Gọi robot & Hệ thống</div>
-      <div class="btn-grid">
-        <button class="btn-action" onclick="sendCtrl('robot_call')">📣 Gọi / Ngắt robot</button>
-        <button class="btn-action" style="border-color: var(--danger); color: var(--danger);" onclick="confirmReboot()">🔄 Khởi động lại</button>
-      </div>
-      <div style="font-size:12px; color: var(--text-dim); margin-top:8px; line-height:1.45;">
-        <b>Gọi / Ngắt robot</b>: giống nhấn nút BOOT hoặc chạm 2 lần trên robot. Robot đang rảnh thì bắt đầu nghe, đang nghe hoặc đang nói thì ngắt.<br>
-        <b>Khởi động lại</b>: robot tắt rồi bật lại trong vài giây. Trang web sẽ tự kết nối lại khi robot lên.
-      </div>
-    </div>
-
-    <!-- Card 2: Hành động Cổ/Đầu -->
-    <div class="card">
-      <div class="card-title">🗣️ Hành động Servo Cổ</div>
-      <div class="btn-grid">
-        <button class="btn-action" onclick="sendCtrl('head_center')">🎯 Cân bằng (Center)</button>
-        <button class="btn-action" onclick="sendCtrl('head_nod')">👍 Gật đầu (Nod)</button>
-        <button class="btn-action" onclick="sendCtrl('head_shake')">👎 Lắc đầu (Shake)</button>
-        <button class="btn-action" onclick="sendCtrl('head_curious')">🤔 Tò mò (Curious)</button>
-      </div>
-    </div>
-
-    <!-- Card 3: Trình phát nhạc -->
-    <div class="card">
-      <div class="card-title">🎵 Âm nhạc & SD Card</div>
-      <div class="btn-grid" style="margin-bottom: 10px;">
-        <button class="btn-action" onclick="sendMusic('play_mood', {mood:'vuive'})">😊 Nhạc vui</button>
-        <button class="btn-action" onclick="sendMusic('play_mood', {mood:'buon'})">😢 Nhạc buồn</button>
-        <button class="btn-action" onclick="sendMusic('next')">⏭️ Bài tiếp</button>
-        <button class="btn-action" onclick="sendMusic('stop')">⏹️ Dừng nhạc</button>
-      </div>
-      <input type="text" id="musicQuery" placeholder="Nhập tên bài hát..." />
-      <button class="btn-action" style="width: 100%; background: var(--accent); color: #000; font-weight: bold;" onclick="searchMusic()">🔍 Tìm & Phát</button>
-    </div>
-
-    <!-- Card 4: Cài đặt thông số -->
-    <div class="card">
-      <div class="card-title">⚙️ Cấu hình Hệ thống</div>
-      <div class="control-group">
-        <div class="control-label">Tốc độ tiến: <span id="vMove">60</span></div>
-        <input type="range" id="moveSpeed" min="0" max="100" value="60" oninput="syncVal('vMove', this.value)">
-      </div>
-      <div class="control-group">
-        <div class="control-label">Tốc độ xoay: <span id="vTurn">55</span></div>
-        <input type="range" id="turnSpeed" min="0" max="100" value="55" oninput="syncVal('vTurn', this.value)">
-      </div>
-      <div class="control-group">
-        <div class="control-label">Bước di chuyển (ms): <span id="vStep">350</span></div>
-        <input type="range" id="stepMs" min="80" max="2000" value="350" oninput="syncVal('vStep', this.value)">
-      </div>
-      <div class="control-group">
-        <div class="control-label">Âm lượng loa: <span id="vVol">60</span></div>
-        <input type="range" id="volume" min="0" max="100" value="60" oninput="syncVal('vVol', this.value)">
-      </div>
-      <button class="btn-action" style="width: 100%; background: var(--ok); color: #000; font-weight: bold;" onclick="saveSettings()">💾 Lưu Cài Đặt</button>
-
-    </div>
-        <!-- Card 5: Hành vi "có sự sống" -->
-    <div class="card" id="lifeCard">
-    <style>
-        #lifeCard .lf-hint { font-size: 12px; color: var(--text-dim); margin: 3px 0 10px 0; line-height: 1.45; }
-        #lifeCard .lf-warn { color: #ffb74d; }
-        #lifeCard input[type=number] { width: 100%; background: #111a2e; border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 8px; }
-        #lifeCard .lf-row { display: flex; gap: 8px; }
-        #lifeCard .lf-row > div { flex: 1; }
-        #lifeCard .lf-sep { border-top: 1px solid var(--border); margin: 12px 0; }
-        
-        /* Cấu trúc lại các dòng chứa label và checkbox */
-        #lifeCard .lf-checkbox-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
-        #lifeCard label.lf-chk { display: flex; gap: 8px; align-items: center; cursor: pointer; font-size: 14px; flex: 1; }
-        #lifeCard .control-label { display: flex; justify-content: space-between; align-items: center; }
-
-        /* Style cho nút dấu hỏi */
-        #lifeCard .help-btn {
-        display: inline-flex; align-items: center; justify-content: center;
-        width: 18px; height: 18px; border-radius: 50%;
-        background: #1e2c4d; color: #8a99ad;
-        font-size: 12px; font-weight: bold;
-        cursor: pointer; border: 1px solid #1e2c4d;
-        transition: all 0.2s; user-select: none; flex-shrink: 0;
-        }
-        #lifeCard .help-btn:hover { background: #00d2ff; color: #000; border-color: #00d2ff; }
-        
-        /* Class ẩn chú thích */
-        #lifeCard .lf-hint-hidden { display: none !important; }
-    </style>
-
-    <div class="card-title">
-        🌱 Hành vi "có sự sống"
-        <span class="help-btn" onclick="toggleHintById('hint-main')">?</span>
-    </div>
-    <div class="lf-hint lf-hint-hidden" id="hint-main">Robot tự gật/lắc đầu và nhích nhẹ khi trò chuyện để trông sinh động hơn. Chỉnh xong nhớ bấm "Lưu". Giá trị được nhớ cả khi tắt nguồn.</div>
-
-    <!-- Checkbox 1 -->
-    <div class="lf-checkbox-row">
-        <label class="lf-chk"><input type="checkbox" id="lfHead"> Cử động đầu khi robot đang nói</label>
-        <span class="help-btn" onclick="toggleHintById('hint-head')">?</span>
-    </div>
-    <div class="lf-hint lf-hint-hidden" id="hint-head">Đầu gật/lắc ngẫu nhiên nhẹ trong lúc robot trả lời. Tắt nếu thấy tiếng servo làm phiền.</div>
-
-    <!-- Checkbox 2 -->
-    <div class="lf-checkbox-row">
-        <label class="lf-chk"><input type="checkbox" id="lfListen"> Gật đầu khi nghe bạn nói</label>
-        <span class="help-btn" onclick="toggleHintById('hint-listen')">?</span>
-    </div>
-    <div class="lf-hint lf-hint-hidden" id="hint-listen">Khi bạn nói liên tục hơn khoảng 1,5 giây, robot gật đầu để thể hiện đang lắng nghe. Nếu robot gật khi không ai nói (micro bắt nhiễu), hãy tắt mục này.</div>
-
-    <!-- Checkbox 3 -->
-    <div class="lf-checkbox-row">
-        <label class="lf-chk"><input type="checkbox" id="lfIdle"> Cử động nhỏ khi rảnh</label>
-        <span class="help-btn" onclick="toggleHintById('hint-idle')">?</span>
-    </div>
-    <div class="lf-hint lf-hint-hidden" id="hint-idle">Thỉnh thoảng nghiêng đầu tò mò khi không trò chuyện.</div>
-
-    <div class="lf-sep"></div>
-    
-    <!-- Checkbox 4 (Warning) -->
-    <div class="lf-checkbox-row">
-        <label class="lf-chk"><input type="checkbox" id="lfWheel"> ⚠️ Cho phép nhích bánh xe khi robot nói</label>
-        <span class="help-btn" onclick="toggleHintById('hint-wheel')">?</span>
-    </div>
-    <div class="lf-hint lf-warn lf-hint-hidden" id="hint-wheel">Robot sẽ tiến/lùi nhẹ khi đang nói. Chỉ bật sau khi bạn đã bấm "Thử nhích" và đo quãng đường bên dưới. Đặt robot ở giữa bàn, cách mép bàn xa hơn "Giới hạn lệch" ít nhất 20 cm. Lệnh dừng từ web, giọng nói hoặc tay cầm RC luôn được ưu tiên.</div>
-
-    <!-- Input 1 -->
-    <div class="control-label">
-        <span>Tốc độ khi nhích (30–100)</span>
-        <span class="help-btn" onclick="toggleHintById('hint-speed')">?</span>
-    </div>
-    <input type="number" id="lfSpeed" min="30" max="100" step="5">
-    <div class="lf-hint lf-hint-hidden" id="hint-speed">Công suất động cơ mỗi lần nhích. Số lớn thì nhích dứt khoát, số nhỏ thì êm nhưng bánh có thể không quay. Gợi ý bắt đầu 80–90; nếu bánh không nhúc nhích thì tăng lên.</div>
-
-    <!-- Input 2 -->
-    <div class="control-label">
-        <span>Thời gian cấp điện mỗi lần nhích (ms) (40–500)</span>
-        <span class="help-btn" onclick="toggleHintById('hint-ms')">?</span>
-    </div>
-    <input type="number" id="lfMs" min="40" max="500" step="10">
-    <div class="lf-hint lf-hint-hidden" id="hint-ms">Càng lớn thì robot đi càng xa mỗi lần. Nếu bấm "Thử nhích" mà bánh không nhúc nhích thì tăng thêm 20–40 ms rồi thử lại. Robot lớn/nặng cần số lớn hơn robot nhỏ/nhẹ.</div>
-
-    <!-- Input 3 -->
-    <div class="control-label">
-        <span>Quãng đường THỰC TẾ mỗi lần nhích (cm) (1–25)</span>
-        <span class="help-btn" onclick="toggleHintById('hint-cm')">?</span>
-    </div>
-    <input type="number" id="lfCm" min="1" max="25" step="1">
-    <div class="lf-hint lf-hint-hidden" id="hint-cm">Cách làm: đặt robot trên bàn, bấm "Thử nhích tiến", dùng thước đo robot vừa đi bao nhiêu cm (đo 3 lần lấy trung bình, làm tròn), rồi nhập vào đây. Robot dùng số này để tính mình đã lệch bao xa so với chỗ đặt. Nhập thấp hơn thực tế sẽ làm giới hạn bên dưới kém an toàn.</div>
-
-    <!-- Input 4 -->
-    <div class="control-label">
-        <span>Giới hạn lệch tối đa so với chỗ đặt (cm) (5–25)</span>
-        <span class="help-btn" onclick="toggleHintById('hint-drift')">?</span>
-    </div>
-    <input type="number" id="lfDrift" min="5" max="25" step="1">
-    <div class="lf-hint lf-hint-hidden" id="hint-drift">Robot không bao giờ đi xa hơn khoảng này so với chỗ bạn đặt. Hãy đặt nhỏ hơn khoảng cách từ robot đến mép bàn ít nhất 10 cm. Số này phải lớn hơn hoặc bằng "quãng đường mỗi lần nhích", nếu không robot sẽ không nhích. Robot lệch dần do bánh trượt hoặc 2 động cơ không đều, nên thỉnh thoảng hãy đặt lại về giữa bàn.</div>
-
-    <!-- Input 5 -->
-    <div class="control-label">
-        <span>Nghỉ giữa 2 lần nhích (giây): thấp nhất / cao nhất</span>
-        <span class="help-btn" onclick="toggleHintById('hint-gap')">?</span>
-    </div>
-    <div class="lf-row">
-        <div><input type="number" id="lfGapMin" min="2" max="120"></div>
-        <div><input type="number" id="lfGapMax" min="2" max="300"></div>
-    </div>
-    <div class="lf-hint lf-hint-hidden" id="hint-gap">Khi robot đang nói, mỗi lần nhích cách nhau ngẫu nhiên trong khoảng này. Muốn nhích ít hơn thì tăng cả hai số.</div>
-
-    <!-- Input 6 -->
-    <div class="control-label">
-        <span>Nghỉ giữa 2 cử động khi rảnh (giây): thấp nhất / cao nhất</span>
-        <span class="help-btn" onclick="toggleHintById('hint-idle-gap')">?</span>
-    </div>
-    <div class="lf-row">
-        <div><input type="number" id="lfIdleMin" min="5" max="600"></div>
-        <div><input type="number" id="lfIdleMax" min="5" max="1200"></div>
-    </div>
-    <div class="lf-hint lf-hint-hidden" id="hint-idle-gap">Chỉ áp dụng khi robot đang rảnh và bật "Cử động nhỏ khi rảnh".</div>
-
-    <!-- Nút thử nghiệm -->
-    <div class="control-label" style="margin-top: 10px;">
-        <span>Thử nghiệm</span>
-        <span class="help-btn" onclick="toggleHintById('hint-test')">?</span>
-    </div>
-    <div class="btn-grid" style="margin-bottom: 8px;">
-        <button class="btn-action" onclick="testNudge('forward')">⬆️ Thử nhích tiến</button>
-        <button class="btn-action" onclick="testNudge('backward')">⬇️ Thử nhích lùi</button>
-    </div>
-    <div class="lf-hint lf-hint-hidden" id="hint-test">Nút "Thử" dùng đúng các giá trị đang nhập ở trên (tự lưu luôn) và hoạt động cả khi chưa tick bật nhích bánh xe.</div>
-
-    <button class="btn-action" style="width: 100%; background: var(--ok); color: #000; font-weight: bold;" onclick="saveLife()">💾 Lưu hành vi</button>
-    </div>
-
-        <!-- Card: Chat & Lệnh -->
-    <div class="card" id="chatCard">
-      <div class="card-title">💬 Chat & Lệnh</div>
-      <div id="chatMessages">
-        <div class="chat-msg-sys">Nhập lệnh: "đi thẳng 2 giây", "dừng", "gật đầu", "phát nhạc", "dừng nhạc"...</div>
-      </div>
-      <div id="chatInputRow">
-        <input type="text" id="chatInput" placeholder="Nhập lệnh (vd: phát nhạc, đi thẳng 2 giây)" />
-        <button id="btnChatSend">Gửi</button>
-      </div>
-    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab" role="tab" data-tab="control">🎮 Điều khiển</button>
+      <button class="tab" role="tab" data-tab="chat">💬 Chat & Nhạc</button>
+      <button class="tab" role="tab" data-tab="life">🌱 Hành vi</button>
+      <button class="tab" role="tab" data-tab="settings">⚙️ Cài đặt <i class="count hidden" id="setBadge">!</i></button>
+      <button class="tab" role="tab" data-tab="log">📜 Nhật ký <i class="count hidden" id="logBadge">0</i></button>
+    </nav>
   </div>
+</header>
 
-  <div class="log-box" id="logBox">System ready.</div>
+<main class="wrap">
 
-    <script>
-    // ===== Helpers =====
-    const $ = id => document.getElementById(id);
-    let macroState = { recording: false, playing: false, count: 0 };
-    function escapeHtml(s) {
-      return String(s).replace(/[&<>"']/g, c => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-      }[c]));
+  <!-- ================= TAB: ĐIỀU KHIỂN ================= -->
+  <section class="panel" data-panel="control">
+    <div class="grid">
+
+      <div class="card span-2">
+        <div class="card-h"><h2>🎮 Điều khiển bánh xe</h2></div>
+        <div class="seg" id="joyModeSeg">
+          <label><input type="radio" name="joyMode" value="dpad"> D-pad</label>
+          <label><input type="radio" name="joyMode" value="joystick"> Joystick</label>
+          <label><input type="radio" name="joyMode" value="both" checked> Cả hai</label>
+        </div>
+        <div class="drive">
+          <div class="dpad">
+            <span></span>
+            <button data-cmd="forward" aria-label="Tiến">▲</button>
+            <span></span>
+            <button data-cmd="left" aria-label="Trái">◀</button>
+            <button data-cmd="stop" class="stop" aria-label="Dừng">■</button>
+            <button data-cmd="right" aria-label="Phải">▶</button>
+            <span></span>
+            <button data-cmd="backward" aria-label="Lùi">▼</button>
+            <span></span>
+          </div>
+          <div class="joy">
+            <svg id="joyBase" viewBox="-100 -100 200 200" width="200" height="200">
+              <circle class="joy-ring" cx="0" cy="0" r="90"/>
+              <line class="joy-axis" x1="-90" y1="0" x2="90" y2="0"/>
+              <line class="joy-axis" x1="0" y1="-90" x2="0" y2="90"/>
+              <circle class="joy-center" cx="0" cy="0" r="2"/>
+              <circle id="joyKnob" cx="0" cy="0" r="28"/>
+            </svg>
+          </div>
+        </div>
+        <div class="readout">
+          <div>x <b id="joyX">0.00</b></div>
+          <div>y <b id="joyY">0.00</b></div>
+          <div>L <b id="joyL">0</b></div>
+          <div>R <b id="joyR">0</b></div>
+        </div>
+        <div class="keys muted">
+          Phím tắt: <span class="kbd">↑</span><span class="kbd">↓</span><span class="kbd">←</span><span class="kbd">→</span> hoặc
+          <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> ·
+          <span class="kbd">Space</span> dừng · <span class="kbd">Esc</span> dừng khẩn cấp
+        </div>
+      </div>
+
+      <div class="card" id="macroCard">
+        <div class="card-h"><h2>🎬 Macro ghi & phát</h2></div>
+        <button class="macro-main-btn rec" id="btnMacroRec">● Bắt đầu ghi</button>
+        <div class="macro-status" id="macroStatus">Chưa có macro</div>
+        <button class="macro-main-btn play" id="btnMacroPlay" disabled>▶ Phát lại</button>
+        <div class="sep"></div>
+        <div class="sec-title">Lưu vào bộ nhớ</div>
+        <div class="row" style="margin-bottom:8px">
+          <input type="text" class="input" id="macroNameInput" placeholder="Tên macro (vd: demo_1)" maxlength="32" />
+          <button class="btn" id="btnMacroSave" title="Lưu macro hiện tại">💾 Lưu</button>
+        </div>
+        <select class="input" id="macroSavedList"><option value="">-- Chưa có macro nào --</option></select>
+        <div class="btn-grid" style="margin-top:8px">
+          <button class="btn" id="btnMacroLoad">📂 Tải</button>
+          <button class="btn danger" id="btnMacroDelete">🗑 Xoá file</button>
+        </div>
+        <button class="btn ghost block sm" id="btnMacroClear" style="margin-top:8px">Xoá macro đang có trong bộ nhớ tạm</button>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><h2>🗣️ Servo cổ</h2></div>
+        <div class="btn-grid">
+          <button class="btn" data-cmd="head_center">🎯 Cân bằng</button>
+          <button class="btn" data-cmd="head_nod">👍 Gật đầu</button>
+          <button class="btn" data-cmd="head_shake">👎 Lắc đầu</button>
+          <button class="btn" data-cmd="head_curious">🤔 Tò mò</button>
+        </div>
+      </div>
+
+      <div class="card" id="sysCard">
+        <div class="card-h"><h2>🤖 Gọi robot & hệ thống</h2></div>
+        <div class="btn-grid">
+          <button class="btn primary" data-cmd="robot_call">📣 Gọi / Ngắt</button>
+          <button class="btn danger" id="btnReboot">🔄 Khởi động lại</button>
+        </div>
+        <p class="muted" style="margin-top:10px; line-height:1.5">
+          <b>Gọi / Ngắt</b>: giống nhấn nút BOOT hoặc chạm 2 lần trên robot. Đang rảnh thì bắt đầu nghe, đang nghe/nói thì ngắt.<br>
+          <b>Khởi động lại</b>: robot tắt rồi bật lại trong vài giây, trang sẽ tự kết nối lại.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ================= TAB: CHAT & NHẠC ================= -->
+  <section class="panel" data-panel="chat">
+    <div class="grid">
+      <div class="card span-2" id="chatCard">
+        <div class="card-h"><h2>💬 Chat & lệnh</h2></div>
+        <div id="chatMessages">
+          <div class="msg sys">Nhập lệnh như "đi thẳng 2 giây", "dừng", "gật đầu", "phát nhạc"…</div>
+        </div>
+        <div class="chips" id="chatChips">
+          <button class="chip" data-say="đi thẳng 2 giây">đi thẳng 2 giây</button>
+          <button class="chip" data-say="dừng">dừng</button>
+          <button class="chip" data-say="gật đầu">gật đầu</button>
+          <button class="chip" data-say="phát nhạc">phát nhạc</button>
+          <button class="chip" data-say="dừng nhạc">dừng nhạc</button>
+        </div>
+        <div class="row">
+          <input type="text" class="input" id="chatInput" placeholder="Nhập lệnh rồi nhấn Enter" autocomplete="off" />
+          <button class="btn primary" id="btnChatSend">Gửi</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><h2>🎵 Âm nhạc & thẻ SD</h2></div>
+        <div class="btn-grid" style="margin-bottom:12px">
+          <button class="btn" data-music="play_mood" data-mood="vuive">😊 Nhạc vui</button>
+          <button class="btn" data-music="play_mood" data-mood="buon">😢 Nhạc buồn</button>
+          <button class="btn" data-music="next">⏭️ Bài tiếp</button>
+          <button class="btn" data-music="stop">⏹️ Dừng nhạc</button>
+        </div>
+        <div class="row">
+          <input type="text" class="input" id="musicQuery" placeholder="Tên bài hát…" />
+          <button class="btn primary" id="btnMusicSearch">🔍 Phát</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= TAB: HÀNH VI ================= -->
+  <section class="panel" data-panel="life">
+    <div class="card hidden" id="lifeUnsupported">
+      <div class="card-h"><h2>🌱 Hành vi "có sự sống"</h2></div>
+      <p class="muted" style="line-height:1.5">Firmware đang chạy chưa hỗ trợ tính năng này (<code>/api/settings</code> không có các trường <code>life_…</code>). Hãy nạp firmware mới hơn rồi tải lại trang.</p>
+    </div>
+      <div class="card" id="lifeCard">
+        <div class="card-h">
+          <h2>🌱 Hành vi "có sự sống"</h2>
+          <button class="help" data-hint="hint-main" aria-expanded="false">?</button>
+        </div>
+        <div class="hint hidden" id="hint-main">Robot tự gật/lắc đầu và nhích nhẹ khi trò chuyện để trông sinh động hơn. Chỉnh xong nhớ bấm "Lưu". Giá trị được nhớ cả khi tắt nguồn.</div>
+
+        <div class="grid" style="gap:18px">
+          <div>
+            <div class="sec-title">Cử động đầu</div>
+            <div class="sw-row"><label class="sw"><input type="checkbox" id="lfHead"> Cử động đầu khi robot đang nói</label><button class="help" data-hint="hint-head">?</button></div>
+            <div class="hint hidden" id="hint-head">Đầu gật/lắc ngẫu nhiên nhẹ trong lúc robot trả lời. Tắt nếu thấy tiếng servo làm phiền.</div>
+            <div class="sw-row"><label class="sw"><input type="checkbox" id="lfListen"> Gật đầu khi nghe bạn nói</label><button class="help" data-hint="hint-listen">?</button></div>
+            <div class="hint hidden" id="hint-listen">Khi bạn nói liên tục hơn khoảng 1,5 giây, robot gật đầu để thể hiện đang lắng nghe. Nếu robot gật khi không ai nói (micro bắt nhiễu), hãy tắt mục này.</div>
+            <div class="sw-row"><label class="sw"><input type="checkbox" id="lfIdle"> Cử động nhỏ khi rảnh</label><button class="help" data-hint="hint-idle">?</button></div>
+            <div class="hint hidden" id="hint-idle">Thỉnh thoảng nghiêng đầu tò mò khi không trò chuyện.</div>
+
+            <div class="field" style="margin-top:10px">
+              <div class="lbl"><span>Nghỉ giữa 2 cử động khi rảnh (giây)</span><button class="help" data-hint="hint-idle-gap">?</button></div>
+              <div class="two">
+                <div><span class="muted">Thấp nhất</span><input type="number" class="input" id="lfIdleMin" min="5" max="600" inputmode="numeric"></div>
+                <div><span class="muted">Cao nhất</span><input type="number" class="input" id="lfIdleMax" min="5" max="1200" inputmode="numeric"></div>
+              </div>
+              <div class="hint hidden" id="hint-idle-gap" style="margin-top:8px">Chỉ áp dụng khi robot đang rảnh và bật "Cử động nhỏ khi rảnh".</div>
+            </div>
+          </div>
+
+          <div>
+            <div class="sec-title">Nhích bánh xe</div>
+            <div class="sw-row"><label class="sw"><input type="checkbox" id="lfWheel"> ⚠️ Cho phép nhích bánh xe khi robot nói</label><button class="help" data-hint="hint-wheel">?</button></div>
+            <div class="hint warn hidden" id="hint-wheel">Robot sẽ tiến/lùi nhẹ khi đang nói. Chỉ bật sau khi bạn đã bấm "Thử nhích" và đo quãng đường bên dưới. Đặt robot ở giữa bàn, cách mép bàn xa hơn "Giới hạn lệch" ít nhất 20 cm. Lệnh dừng từ web, giọng nói hoặc tay cầm RC luôn được ưu tiên.</div>
+
+            <div class="two" style="margin-top:8px">
+              <div class="field">
+                <div class="lbl"><span>Tốc độ (30–100)</span><button class="help" data-hint="hint-speed">?</button></div>
+                <input type="number" class="input" id="lfSpeed" min="30" max="100" step="5" inputmode="numeric">
+              </div>
+              <div class="field">
+                <div class="lbl"><span>Cấp điện (ms, 40–500)</span><button class="help" data-hint="hint-ms">?</button></div>
+                <input type="number" class="input" id="lfMs" min="40" max="500" step="10" inputmode="numeric">
+              </div>
+            </div>
+            <div class="hint hidden" id="hint-speed">Công suất động cơ mỗi lần nhích. Số lớn thì nhích dứt khoát, số nhỏ thì êm nhưng bánh có thể không quay. Gợi ý bắt đầu 80–90; nếu bánh không nhúc nhích thì tăng lên.</div>
+            <div class="hint hidden" id="hint-ms">Càng lớn thì robot đi càng xa mỗi lần. Nếu bấm "Thử nhích" mà bánh không nhúc nhích thì tăng thêm 20–40 ms rồi thử lại. Robot lớn/nặng cần số lớn hơn robot nhỏ/nhẹ.</div>
+
+            <div class="two">
+              <div class="field">
+                <div class="lbl"><span>Quãng đường THỰC TẾ (cm, 1–25)</span><button class="help" data-hint="hint-cm">?</button></div>
+                <input type="number" class="input" id="lfCm" min="1" max="25" step="1" inputmode="numeric">
+              </div>
+              <div class="field">
+                <div class="lbl"><span>Giới hạn lệch (cm, 5–25)</span><button class="help" data-hint="hint-drift">?</button></div>
+                <input type="number" class="input" id="lfDrift" min="5" max="25" step="1" inputmode="numeric">
+              </div>
+            </div>
+            <div class="hint hidden" id="hint-cm">Cách làm: đặt robot trên bàn, bấm "Thử nhích tiến", dùng thước đo robot vừa đi bao nhiêu cm (đo 3 lần lấy trung bình, làm tròn), rồi nhập vào đây. Robot dùng số này để tính mình đã lệch bao xa so với chỗ đặt. Nhập thấp hơn thực tế sẽ làm giới hạn bên dưới kém an toàn.</div>
+            <div class="hint hidden" id="hint-drift">Robot không bao giờ đi xa hơn khoảng này so với chỗ bạn đặt. Hãy đặt nhỏ hơn khoảng cách từ robot đến mép bàn ít nhất 10 cm. Số này phải lớn hơn hoặc bằng "quãng đường mỗi lần nhích", nếu không robot sẽ không nhích. Robot lệch dần do bánh trượt hoặc 2 động cơ không đều, nên thỉnh thoảng hãy đặt lại về giữa bàn.</div>
+
+            <div class="field">
+              <div class="lbl"><span>Nghỉ giữa 2 lần nhích (giây)</span><button class="help" data-hint="hint-gap">?</button></div>
+              <div class="two">
+                <div><span class="muted">Thấp nhất</span><input type="number" class="input" id="lfGapMin" min="2" max="120" inputmode="numeric"></div>
+                <div><span class="muted">Cao nhất</span><input type="number" class="input" id="lfGapMax" min="2" max="300" inputmode="numeric"></div>
+              </div>
+              <div class="hint hidden" id="hint-gap" style="margin-top:8px">Khi robot đang nói, mỗi lần nhích cách nhau ngẫu nhiên trong khoảng này. Muốn nhích ít hơn thì tăng cả hai số.</div>
+            </div>
+
+            <div class="lbl"><span>Thử nghiệm</span><button class="help" data-hint="hint-test">?</button></div>
+            <div class="btn-grid">
+              <button class="btn" data-nudge="forward">⬆️ Thử nhích tiến</button>
+              <button class="btn" data-nudge="backward">⬇️ Thử nhích lùi</button>
+            </div>
+            <div class="hint hidden" id="hint-test" style="margin-top:8px">Nút "Thử" dùng đúng các giá trị đang nhập ở trên (tự lưu luôn) và hoạt động cả khi chưa bật nhích bánh xe.</div>
+          </div>
+        </div>
+
+        <div class="sep"></div>
+        <div class="err-box hidden" id="lifeErr"></div>
+        <button class="btn success block" id="btnSaveLife">💾 Lưu hành vi</button>
+      </div>
+  </section>
+
+  <!-- ================= TAB: CÀI ĐẶT ================= -->
+  <section class="panel" data-panel="settings">
+    <div class="grid">
+
+      <div class="card" id="setCard">
+        <div class="card-h"><h2>⚙️ Thông số chuyển động & âm thanh</h2><span class="pill hidden" id="setDirty">Chưa lưu</span></div>
+        <div class="field">
+          <div class="lbl">Tốc độ tiến <output id="vMove">60</output></div>
+          <input type="range" id="moveSpeed" min="0" max="100" value="60" data-out="vMove">
+        </div>
+        <div class="field">
+          <div class="lbl">Tốc độ xoay <output id="vTurn">55</output></div>
+          <input type="range" id="turnSpeed" min="0" max="100" value="55" data-out="vTurn">
+        </div>
+        <div class="field">
+          <div class="lbl">Bước di chuyển (ms) <output id="vStep">350</output></div>
+          <input type="range" id="stepMs" min="80" max="2000" value="350" data-out="vStep">
+        </div>
+        <div class="field">
+          <div class="lbl">Âm lượng loa <output id="vVol">60</output></div>
+          <input type="range" id="volume" min="0" max="100" value="60" data-out="vVol">
+        </div>
+        <button class="btn success block" id="btnSaveSettings">💾 Lưu cài đặt</button>
+      </div>
+
+      <div class="card" id="authCard">
+        <div class="card-h"><h2>🔒 Bảo mật WebUI</h2></div>
+        <div class="alert hidden" id="authWarn">⚠️ Bạn đang dùng mật khẩu mặc định ("admin"). Hãy đổi ngay để người khác trong mạng Wi-Fi không điều khiển được robot.</div>
+        <div class="field">
+          <div class="lbl"><label for="authNew">Mật khẩu mới</label><span id="pwLen">0/32</span></div>
+          <div class="pw">
+            <input type="password" class="input" id="authNew" maxlength="32" autocomplete="new-password" />
+            <button type="button" class="pw-eye" data-target="authNew" aria-pressed="false" aria-label="Hiện mật khẩu">
+              <svg class="ic-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg class="ic-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2M6.6 6.6C3.9 8.3 2 12 2 12s3.5 7 10 7c1.8 0 3.4-.5 4.8-1.3"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+            </button>
+          </div>
+          <div class="meter"><i id="pwBar"></i></div>
+          <div class="pw-info"><span id="pwHint">6–32 ký tự</span><span id="pwStrength"></span></div>
+        </div>
+        <div class="field">
+          <div class="lbl"><label for="authNew2">Nhập lại mật khẩu mới</label></div>
+          <div class="pw">
+            <input type="password" class="input" id="authNew2" maxlength="32" autocomplete="new-password" />
+            <button type="button" class="pw-eye" data-target="authNew2" aria-pressed="false" aria-label="Hiện mật khẩu">
+              <svg class="ic-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg class="ic-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2M6.6 6.6C3.9 8.3 2 12 2 12s3.5 7 10 7c1.8 0 3.4-.5 4.8-1.3"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+            </button>
+          </div>
+          <div class="match" id="pwMatch"></div>
+        </div>
+        <button class="btn primary block" id="btnPw" disabled>🔑 Đổi mật khẩu</button>
+        <p class="muted" style="margin-top:10px; line-height:1.5">
+          Tên đăng nhập luôn là <b>admin</b>. Đổi xong trang sẽ tải lại và trình duyệt hỏi đăng nhập bằng mật khẩu mới.
+          Quên mật khẩu thì nạp lại firmware với <code>kResetPasswordOnBoot = true</code> trong <code>web_auth.h</code> một lần.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ================= TAB: NHẬT KÝ ================= -->
+  <section class="panel" data-panel="log">
+    <div class="card">
+      <div class="card-h"><h2>📜 Nhật ký hệ thống</h2></div>
+      <div class="log-tools">
+        <select class="input" id="logFilter">
+          <option value="all">Tất cả</option>
+          <option value="log-error">Lỗi (E)</option>
+          <option value="log-warn">Cảnh báo (W)</option>
+          <option value="log-info">Thông tin (I)</option>
+          <option value="log-debug">Debug (D)</option>
+          <option value="log-sys">Trang web (SYS)</option>
+        </select>
+        <label><input type="checkbox" id="logAuto" checked> Tự cuộn</label>
+        <div class="spacer"></div>
+        <button class="btn sm" id="btnLogSave">⬇️ Tải về</button>
+        <button class="btn sm ghost" id="btnLogClear">Xoá</button>
+      </div>
+      <div class="log-box" id="logBox"></div>
+    </div>
+  </section>
+
+</main>
+
+<button class="estop" id="estop" title="Dừng khẩn cấp (Esc)"><span>■</span>DỪNG</button>
+<div id="toasts" aria-live="polite"></div>
+
+<script>
+  // ===== Helpers =====
+  const $ = id => document.getElementById(id);
+  const LS = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (_) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+  };
+  let macroState = { recording: false, playing: false, count: 0 };
+  let ws = null;
+  let joystick = null;
+  let currentTab = 'control';
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  function wsOpen() { return ws && ws.readyState === WebSocket.OPEN; }
+  function wsSend(obj) {
+    if (!wsOpen()) { toast('Chưa kết nối được với robot', 'err'); log('WS chưa sẵn sàng'); return false; }
+    ws.send(JSON.stringify(obj));
+    return true;
+  }
+
+  // ===== Theme =====
+  const THEME_ORDER = ['auto', 'light', 'dark'];
+  const THEME_LABEL = { auto: 'Tự động', light: 'Sáng', dark: 'Tối' };
+  const themeMq = window.matchMedia ? matchMedia('(prefers-color-scheme: light)') : null;
+  function applyTheme(pref) {
+    const eff = pref === 'auto' ? (themeMq && themeMq.matches ? 'light' : 'dark') : pref;
+    const root = document.documentElement;
+    root.setAttribute('data-theme', eff);
+    root.setAttribute('data-theme-pref', pref);
+    const btn = $('themeBtn');
+    if (btn) {
+      btn.querySelector('span').textContent = THEME_LABEL[pref];
+      btn.title = 'Giao diện: ' + THEME_LABEL[pref] + ' (bấm để đổi)';
     }
+    const meta = document.querySelector('meta[name=theme-color]');
+    if (meta) meta.content = eff === 'light' ? '#f1f4f8' : '#0a0f1a';
+  }
+  function cycleTheme() {
+    const cur = LS.get('theme', 'auto');
+    const next = THEME_ORDER[(THEME_ORDER.indexOf(cur) + 1) % THEME_ORDER.length];
+    LS.set('theme', next);
+    applyTheme(next);
+    toast('Giao diện: ' + THEME_LABEL[next]);
+  }
+  if (themeMq) {
+    const onSys = () => { if (LS.get('theme', 'auto') === 'auto') applyTheme('auto'); };
+    if (themeMq.addEventListener) themeMq.addEventListener('change', onSys); else if (themeMq.addListener) themeMq.addListener(onSys);
+  }
 
-    // ===== Log box =====
-    function appendLogLine(level, msg, cls) {
-      const box = document.getElementById('logBox');
-      if (!box) return;
-      const t = new Date().toLocaleTimeString();
-      const line = document.createElement('div');
-      line.className = cls || 'log-info';
-      line.textContent = `[${t}] ${level} ${msg}`;
-      box.appendChild(line);
-      while (box.childNodes.length > 200) box.removeChild(box.firstChild);
-      box.scrollTop = box.scrollHeight;
+  // ===== Toast =====
+  function toast(msg, type = 'info', ms = 2600) {
+    const box = $('toasts');
+    if (!box) return;
+    const t = document.createElement('div');
+    t.className = 'toast ' + type;
+    t.textContent = msg;
+    box.appendChild(t);
+    while (box.children.length > 3) box.removeChild(box.firstChild);
+    setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 300); }, ms);
+  }
+
+  // ===== Log =====
+  let logFilter = 'all';
+  let logAuto = true;
+  let unseenErr = 0;
+  function updateErrBadge() {
+    const b = $('logBadge');
+    if (!b) return;
+    b.textContent = unseenErr > 99 ? '99+' : unseenErr;
+    b.classList.toggle('hidden', unseenErr === 0);
+  }
+  function appendLogLine(level, msg, cls) {
+    const box = $('logBox');
+    if (!box) return;
+    const t = new Date().toLocaleTimeString();
+    const line = document.createElement('div');
+    line.className = cls || 'log-info';
+    line.textContent = `[${t}] ${level} ${msg}`;
+    if (logFilter !== 'all' && line.className !== logFilter) line.hidden = true;
+    box.appendChild(line);
+    while (box.childNodes.length > 300) box.removeChild(box.firstChild);
+    if (logAuto) box.scrollTop = box.scrollHeight;
+    if (cls === 'log-error' && currentTab !== 'log') { unseenErr++; updateErrBadge(); }
+  }
+  function log(msg) { appendLogLine('SYS', msg, 'log-sys'); }
+  function applyLogFilter() {
+    for (const el of $('logBox').children) el.hidden = logFilter !== 'all' && el.className !== logFilter;
+  }
+  function downloadLog() {
+    const text = Array.from($('logBox').children).map(d => d.textContent).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+    a.download = 'xiaozhi-log-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.txt';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  // ===== Tabs =====
+  function showTab(name) {
+    if (!document.querySelector(`.panel[data-panel="${name}"]`)) name = 'control';
+    document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name ? 'true' : 'false'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.dataset.panel === name));
+    currentTab = name;
+    LS.set('tab', name);
+    if (name === 'log') { unseenErr = 0; updateErrBadge(); const b = $('logBox'); b.scrollTop = b.scrollHeight; }
+    if (name === 'chat') { const c = $('chatMessages'); c.scrollTop = c.scrollHeight; }
+  }
+
+  // ===== Connection indicator =====
+  function setConn(state, text) {
+    const c = $('conn');
+    c.className = 'conn ' + state;
+    $('connText').textContent = text;
+  }
+
+  // ===== Chat =====
+  function addChatMsg(who, text) {
+    const box = $('chatMessages');
+    if (!box) return;
+    const t = new Date().toLocaleTimeString();
+    const div = document.createElement('div');
+    div.className = 'msg ' + (who === 'user' ? 'user' : 'robot');
+    const label = who === 'user' ? '👤 Bạn' : '🤖 Robot';
+    div.innerHTML = `<div class="meta"><b>${label}</b> · ${t}</div><div>${escapeHtml(text)}</div>`;
+    box.appendChild(div);
+    while (box.children.length > 200) box.removeChild(box.firstChild);
+    box.scrollTop = box.scrollHeight;
+  }
+  function sendChat(textOverride) {
+    const input = $('chatInput');
+    const text = (textOverride != null ? textOverride : input.value).trim();
+    if (!text) return;
+    if (!wsOpen()) { addChatMsg('robot', '(Chưa kết nối WebSocket)'); return; }
+    addChatMsg('user', text);
+    ws.send(JSON.stringify({ type: 'chat', text: text }));
+    if (textOverride == null) input.value = '';
+  }
+
+  // ===== REST =====
+  function syncVal(labelId, val) { $(labelId).textContent = val; }
+
+  async function apiGet(url) {
+    try {
+      const r = await fetch(url, { cache: 'no-store' });
+      if (!r.ok) { log(`Lỗi API ${url} (HTTP ${r.status})`); return null; }
+      return await r.json();
+    } catch (e) { log('Lỗi kết nối API'); return null; }
+  }
+
+  async function apiPost(url, body, opts = {}) {
+    try {
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      let res = {};
+      try { res = await r.json(); } catch (_) {}
+      if (!r.ok && res.ok === undefined) res.ok = false;
+      const msg = res.message || (res.ok === false ? `Thất bại (HTTP ${r.status})` : 'Thành công');
+      log(msg);
+      if (res.ok === false) toast(msg, 'err');
+      else if (opts.toast) toast(typeof opts.toast === 'string' ? opts.toast : msg, 'ok');
+      return res;
+    } catch (e) {
+      log('Lỗi gửi lệnh');
+      toast('Không gửi được lệnh, kiểm tra kết nối', 'err');
+      return null;
     }
+  }
 
-    function log(msg) {
-      appendLogLine('SYS', msg, 'log-sys');
+  function renderWheel(ready, l, r) {
+    const el = $('stWheel');
+    if (!ready) { el.textContent = 'Chưa kết nối'; el.className = 'st-err'; }
+    else if (l !== 0 || r !== 0) { el.textContent = 'Đang chạy'; el.className = 'st-run'; }
+    else { el.textContent = 'Sẵn sàng'; el.className = 'st-ok'; }
+  }
+
+  async function refreshStatus() {
+    const st = await apiGet('/api/status');
+    if (st) {
+      renderWheel(!!st.wheel_ready, st.left_speed || 0, st.right_speed || 0);
+      $('stSpeed').textContent = `${st.left_speed}/${st.right_speed}`;
+      $('stVol').textContent = `${st.volume}%`;
     }
-    function toggleHintById(id) {
-        const el = document.getElementById(id);
-        if (el) {
-            el.classList.toggle('lf-hint-hidden');
-        }
-    } 
+  }
 
-    // ===== Chat box =====
-    function addChatMsg(who, text) {
-        const box = document.getElementById('chatMessages');
-        if (!box) return;
-        const t = new Date().toLocaleTimeString();
-        const div = document.createElement('div');
-        const cls = who === 'user' ? 'chat-msg-user' : 'chat-msg-robot';
-        const label = who === 'user' ? '👤 Bạn' : '🤖 Robot';
-        div.className = cls;
-        div.innerHTML = `<div><span class="chat-msg-time">[${t}]</span> <b>${label}</b></div>
-                        <div>${escapeHtml(text)}</div>`;
-        box.appendChild(div);
-        box.scrollTop = box.scrollHeight;
-    }   
+  async function sendCtrl(action) {
+    const ms = Number($('stepMs').value);
+    const isMove = ['forward', 'backward', 'left', 'right'].includes(action);
+    await apiPost('/api/control', isMove ? { action, duration_ms: ms } : { action });
+    setTimeout(refreshStatus, 150);
+  }
 
-    function sendChat() {
-      const input = document.getElementById('chatInput');
-      const text = input.value.trim();
-      if (!text) return;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        addChatMsg('robot', '(Chưa kết nối WebSocket)');
-        return;
-      }
-      addChatMsg('user', text);
-      ws.send(JSON.stringify({ type: 'chat', text: text }));
-      input.value = '';
+  async function sendMusic(action, extra = {}) {
+    await apiPost('/api/music', { action, ...extra });
+  }
+  function searchMusic() {
+    const q = $('musicQuery').value.trim();
+    if (q) sendMusic('search', { query: q });
+    else $('musicQuery').focus();
+  }
+
+  async function saveSettings() {
+    const res = await apiPost('/api/settings', {
+      move_speed: Number($('moveSpeed').value),
+      turn_speed: Number($('turnSpeed').value),
+      step_ms: Number($('stepMs').value),
+      volume: Number($('volume').value)
+    }, { toast: 'Đã lưu cài đặt' });
+    if (res && res.ok !== false) $('setDirty').classList.add('hidden');
+    refreshStatus();
+  }
+
+  // ===== Hành vi "có sự sống" =====
+  const LIFE_NUM = {
+    life_nudge_speed: 'lfSpeed', life_nudge_ms: 'lfMs', life_nudge_cm: 'lfCm',
+    life_max_drift_cm: 'lfDrift', life_nudge_gap_min_s: 'lfGapMin', life_nudge_gap_max_s: 'lfGapMax',
+    life_idle_gap_min_s: 'lfIdleMin', life_idle_gap_max_s: 'lfIdleMax'
+  };
+  const LIFE_LABEL = {
+    lfSpeed: 'Tốc độ khi nhích', lfMs: 'Thời gian cấp điện', lfCm: 'Quãng đường mỗi lần nhích',
+    lfDrift: 'Giới hạn lệch', lfGapMin: 'Nghỉ giữa 2 lần nhích (thấp nhất)', lfGapMax: 'Nghỉ giữa 2 lần nhích (cao nhất)',
+    lfIdleMin: 'Nghỉ khi rảnh (thấp nhất)', lfIdleMax: 'Nghỉ khi rảnh (cao nhất)'
+  };
+  const LIFE_CHK = { life_head_talk: 'lfHead', life_listen_nod: 'lfListen', life_idle: 'lfIdle', life_wheel: 'lfWheel' };
+
+  function loadLife(s) {
+    const ok = !!s && s.life_nudge_ms !== undefined;
+    $('lifeCard').classList.toggle('hidden', !ok);
+    $('lifeUnsupported').classList.toggle('hidden', ok);
+    if (!ok) return;
+    for (const k in LIFE_NUM) $(LIFE_NUM[k]).value = s[k];
+    for (const k in LIFE_CHK) $(LIFE_CHK[k]).checked = !!s[k];
+  }
+  function lifePayload() {
+    const p = {};
+    for (const k in LIFE_NUM) p[k] = Number($(LIFE_NUM[k]).value);
+    for (const k in LIFE_CHK) p[k] = $(LIFE_CHK[k]).checked ? 1 : 0;
+    return p;
+  }
+  function validateLife() {
+    const errs = [];
+    for (const k in LIFE_NUM) {
+      const el = $(LIFE_NUM[k]);
+      const v = Number(el.value), mn = Number(el.min), mx = Number(el.max);
+      const bad = el.value === '' || !isFinite(v) || v < mn || v > mx;
+      el.classList.toggle('bad', bad);
+      if (bad) errs.push(`${LIFE_LABEL[el.id]} phải từ ${mn} đến ${mx}`);
     }
-
-    // ===== REST helpers =====
-    function syncVal(labelId, val) { $(labelId).innerText = val; }
-
-    async function apiGet(url) {
-      try { const r = await fetch(url); return await r.json(); }
-      catch (e) { log('Lỗi kết nối API'); }
-    }
-
-    async function apiPost(url, body) {
-      try {
-        const r = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-        const res = await r.json();
-        log(res.message || 'Thành công');
-        return res;
-      } catch (e) { log('Lỗi gửi lệnh'); }
-    }
-
-    async function refreshStatus() {
-      const st = await apiGet('/api/status');
-      if (st) {
-        $('stWheel').innerText = st.wheel_ready ? 'Sẵn sàng' : 'Chưa kết nối';
-        $('stSpeed').innerText = `${st.left_speed}/${st.right_speed}`;
-        $('stVol').innerText = `${st.volume}%`;
-      }
-    }
-
-    async function sendCtrl(action) {
-      const ms = Number($('stepMs').value);
-      const isMove = ['forward', 'backward', 'left', 'right'].includes(action);
-      await apiPost('/api/control', isMove ? { action, duration_ms: ms } : { action });
-      setTimeout(refreshStatus, 150);
-    }
-
-    async function sendMusic(action, extra = {}) {
-      await apiPost('/api/music', { action, ...extra });
-    }
-
-    function searchMusic() {
-      const q = $('musicQuery').value.trim();
-      if (q) sendMusic('search', { query: q });
-    }
-
-    async function saveSettings() {
-      await apiPost('/api/settings', {
-        move_speed: Number($('moveSpeed').value),
-        turn_speed: Number($('turnSpeed').value),
-        step_ms: Number($('stepMs').value),
-        volume: Number($('volume').value)
-      });
-      refreshStatus();
-    }
-        // ===== Hành vi "có sự sống" =====
-    const LIFE_NUM = {
-      life_nudge_speed: 'lfSpeed', life_nudge_ms: 'lfMs', life_nudge_cm: 'lfCm',
-      life_max_drift_cm: 'lfDrift', life_nudge_gap_min_s: 'lfGapMin', life_nudge_gap_max_s: 'lfGapMax',
-      life_idle_gap_min_s: 'lfIdleMin', life_idle_gap_max_s: 'lfIdleMax'
+    const n = id => Number($(id).value);
+    const pair = (a, b, label) => {
+      if (n(a) > n(b)) { $(a).classList.add('bad'); $(b).classList.add('bad'); errs.push(label + ': số "thấp nhất" đang lớn hơn số "cao nhất"'); }
     };
-    const LIFE_CHK = { life_head_talk: 'lfHead', life_listen_nod: 'lfListen', life_idle: 'lfIdle', life_wheel: 'lfWheel' };
-
-    function loadLife(s) {
-      if (!s || s.life_nudge_ms === undefined) { $('lifeCard').style.display = 'none'; return; }
-      for (const k in LIFE_NUM) $(LIFE_NUM[k]).value = s[k];
-      for (const k in LIFE_CHK) $(LIFE_CHK[k]).checked = !!s[k];
+    pair('lfGapMin', 'lfGapMax', 'Nghỉ giữa 2 lần nhích');
+    pair('lfIdleMin', 'lfIdleMax', 'Nghỉ khi rảnh');
+    if (n('lfDrift') < n('lfCm')) {
+      $('lfDrift').classList.add('bad');
+      errs.push('Giới hạn lệch phải ≥ quãng đường mỗi lần nhích, nếu không robot sẽ không nhích');
     }
+    const box = $('lifeErr');
+    box.innerHTML = errs.map(e => '• ' + escapeHtml(e)).join('<br>');
+    box.classList.toggle('hidden', errs.length === 0);
+    if (errs.length) toast('Có ' + errs.length + ' giá trị chưa hợp lệ', 'err');
+    return errs.length === 0;
+  }
+  async function saveLife() {
+    if (!validateLife()) return;
+    await apiPost('/api/settings', lifePayload(), { toast: 'Đã lưu hành vi' });
+  }
+  async function testNudge(dir) {
+    if (!validateLife()) return;
+    await apiPost('/api/settings', { ...lifePayload(), life_test: dir });
+  }
 
-    function lifePayload() {
-      const p = {};
-      for (const k in LIFE_NUM) p[k] = Number($(LIFE_NUM[k]).value);
-      for (const k in LIFE_CHK) p[k] = $(LIFE_CHK[k]).checked ? 1 : 0;
-      return p;
-    }
+  function confirmReboot() {
+    if (confirm('Khởi động lại robot? Robot sẽ tạm thời mất kết nối trong vài giây.')) sendCtrl('robot_reboot');
+  }
 
-    async function saveLife() {
-      await apiPost('/api/settings', lifePayload());
-    }
+  // ===== Mật khẩu =====
+  function loadAuth(s) {
+    const isDefault = !!(s && s.auth_default);
+    $('authWarn').classList.toggle('hidden', !isDefault);
+    $('setBadge').classList.toggle('hidden', !isDefault);
+  }
+  function pwScore(p) {
+    if (p.length < 6) return p.length ? 1 : 0;
+    let s = 1;
+    if (p.length >= 10) s++;
+    if (/[a-z]/.test(p) && /[A-Z]/.test(p)) s++;
+    if (/\d/.test(p)) s++;
+    if (/[^A-Za-z0-9]/.test(p)) s++;
+    return Math.min(s, 4);
+  }
+  function updatePw() {
+    const a = $('authNew').value, b = $('authNew2').value;
+    $('pwLen').textContent = a.length + '/32';
+    const sc = pwScore(a);
+    const bar = $('pwBar');
+    bar.style.width = (sc * 25) + '%';
+    bar.style.background = ['var(--danger)', 'var(--danger)', 'var(--warn)', 'var(--ok)', 'var(--ok)'][sc];
+    $('pwStrength').textContent = ['', 'Yếu', 'Trung bình', 'Khá', 'Mạnh'][sc];
+    $('pwHint').textContent = a.length && a.length < 6 ? `Cần thêm ${6 - a.length} ký tự` : '6–32 ký tự';
+    const m = $('pwMatch');
+    if (!b) { m.textContent = ''; m.className = 'match'; }
+    else if (a === b) { m.textContent = '✓ Hai mật khẩu khớp nhau'; m.className = 'match ok'; }
+    else { m.textContent = '✗ Hai mật khẩu chưa khớp'; m.className = 'match bad'; }
+    $('authNew2').classList.toggle('bad', !!b && a !== b);
+    $('btnPw').disabled = !(a.length >= 6 && a.length <= 32 && a === b);
+  }
+  function togglePwEye(btn) {
+    const inp = $(btn.dataset.target);
+    const show = inp.type === 'password';
+    inp.type = show ? 'text' : 'password';
+    btn.setAttribute('aria-pressed', show ? 'true' : 'false');
+    btn.setAttribute('aria-label', show ? 'Ẩn mật khẩu' : 'Hiện mật khẩu');
+    inp.focus();
+    const len = inp.value.length;
+    try { inp.setSelectionRange(len, len); } catch (_) {}
+  }
+  async function changePassword() {
+    const a = $('authNew').value, b = $('authNew2').value;
+    if (a.length < 6 || a.length > 32) { toast('Mật khẩu phải từ 6 đến 32 ký tự', 'err'); return; }
+    if (a !== b) { toast('Hai mật khẩu không khớp', 'err'); return; }
+    $('btnPw').disabled = true;
+    const res = await apiPost('/api/settings', { new_password: a });
+    if (!res || res.ok === false) { updatePw(); return; }
+    toast('Đã đổi mật khẩu. Trang sẽ tải lại, hãy đăng nhập bằng mật khẩu mới.', 'ok', 4000);
+    setTimeout(() => location.reload(), 1800);
+  }
 
-    async function testNudge(dir) {
-      await apiPost('/api/settings', { ...lifePayload(), life_test: dir });
-    }
-    function confirmReboot() {
-      if (confirm('Khởi động lại robot? Robot sẽ tạm thời mất kết nối trong vài giây.')) {
-        sendCtrl('robot_reboot');
+  // ===== Init =====
+  async function init() {
+    try { initWs(); } catch (e) { log('INIT WS ERROR: ' + e.message); console.error(e); }
+    try {
+      const s = await apiGet('/api/settings');
+      if (s) {
+        const setRange = (id, out, v) => { if (typeof v === 'number') $(id).value = v; syncVal(out, $(id).value); };
+        setRange('moveSpeed', 'vMove', s.move_speed);
+        setRange('turnSpeed', 'vTurn', s.turn_speed);
+        setRange('stepMs', 'vStep', s.step_ms);
+        setRange('volume', 'vVol', s.volume);
+        loadLife(s);
+        loadAuth(s);
       }
-    }
+    } catch (e) { log('INIT SETTINGS ERROR: ' + e.message); }
+    try { refreshStatus(); } catch (e) { log('INIT STATUS ERROR: ' + e.message); }
+  }
 
-    // ===== Init =====
-    async function init() {
-      try { initWs(); }
-      catch (e) { log('INIT WS ERROR: ' + e.message); console.error(e); }
+  // ===== WebSocket =====
+  let wsBackoff = 1000;
+  let wsManualClose = false;
 
-      try {
-        const s = await apiGet('/api/settings');
-        if (s) {
-          $('moveSpeed').value = s.move_speed; syncVal('vMove', s.move_speed);
-          $('turnSpeed').value = s.turn_speed; syncVal('vTurn', s.turn_speed);
-          $('stepMs').value = s.step_ms;       syncVal('vStep', s.step_ms);
-          $('volume').value = s.volume;        syncVal('vVol', s.volume);
-          loadLife(s);
-        }
-      } catch (e) { log('INIT SETTINGS ERROR: ' + e.message); }
+  function initWs() {
+    try {
+      const url = `ws://${location.host}/ws`;
+      log(`WS connecting → ${url}`);
+      setConn('wait', 'Đang kết nối…');
+      ws = new WebSocket(url);
 
-      try {
+      ws.onopen = () => {
+        wsBackoff = 1000;
+        log('WS connected');
+        setConn('ok', 'Đã kết nối');
+        ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
+        ws.send(JSON.stringify({ type: 'macro', cmd: 'list' }));
         refreshStatus();
-        
-      } catch (e) { log('INIT STATUS ERROR: ' + e.message); }
-    }
+        fetchMacroStatusOnce();
+      };
 
-    // ===== WebSocket =====
-    let ws = null;
-    let wsBackoff = 1000;
-    let wsManualClose = false;
+      ws.onmessage = (ev) => {
+        let msg = null;
+        try { msg = JSON.parse(ev.data); } catch (_) {}
+        if (!msg) { log('WS recv (raw): ' + ev.data); return; }
 
-    function initWs() {
-      log('initWs() called');
-      try {
-        const url = `ws://${location.host}/ws`;
-        log(`WS connecting → ${url}`);
-        ws = new WebSocket(url);
-
-        ws.onopen = () => {
-          wsBackoff = 1000;
-          log('WS connected');
-          ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
-          ws.send(JSON.stringify({ type: 'macro', cmd: 'list' }));
-          refreshStatus();
-          fetchMacroStatusOnce();
-        };
-
-        ws.onmessage = (ev) => {
-          let msg = null;
-          try { msg = JSON.parse(ev.data); } catch (_) { }
-
-          if (!msg) {
-            log('WS recv (raw): ' + ev.data);
-            return;
+        if (msg.type === 'log') {
+          const cls = msg.level === 'E' ? 'log-error' : msg.level === 'W' ? 'log-warn' : msg.level === 'D' ? 'log-debug' : 'log-info';
+          appendLogLine(msg.level, msg.msg, cls);
+        } else if (msg.type === 'chat_reply') {
+          addChatMsg('robot', msg.text);
+        } else if (msg.type === 'status') {
+          if (typeof msg.wheel_ready === 'boolean') renderWheel(msg.wheel_ready, msg.left_speed || 0, msg.right_speed || 0);
+          if (typeof msg.left_speed === 'number' && typeof msg.right_speed === 'number') {
+            $('stSpeed').textContent = `${msg.left_speed}/${msg.right_speed}`;
+            if (!joystick || !joystick.active) { $('joyL').textContent = msg.left_speed; $('joyR').textContent = msg.right_speed; }
           }
-
-          if (msg.type === 'log') {
-            const cls = msg.level === 'E' ? 'log-error'
-              : msg.level === 'W' ? 'log-warn'
-                : msg.level === 'D' ? 'log-debug'
-                  : 'log-info';
-            appendLogLine(msg.level, msg.msg, cls);
-          } else if (msg.type === 'chat_reply') {
-            addChatMsg('robot', msg.text);
-          } else if (msg.type === 'status') {
-            // Badge "Trạng thái" — 3 màu: Sẵn sàng / Đang chạy / Lỗi
-            if (typeof msg.wheel_ready === 'boolean') {
-                const el = $('stWheel');
-                const moving = (msg.left_speed !== 0 || msg.right_speed !== 0);
-
-                if (!msg.wheel_ready) {
-                    el.innerText = 'Lỗi';
-                    el.style.color = '#ff5252';
-                } else if (moving) {
-                    el.innerText = 'Đang chạy';
-                    el.style.color = '#00e676';
-                } else {
-                    el.innerText = 'Sẵn sàng';
-                    el.style.color = '#00d2ff';
-                }
-            }
-
-            if (typeof msg.left_speed === 'number' && typeof msg.right_speed === 'number') {
-                $('stSpeed').innerText = `${msg.left_speed}/${msg.right_speed}`;
-                if (!joystick || !joystick.active) {
-                    const lEl = document.getElementById('joyL');
-                    const rEl = document.getElementById('joyR');
-                    if (lEl) lEl.innerText = msg.left_speed;
-                    if (rEl) rEl.innerText = msg.right_speed;
-                }
-            }
-
-            if (typeof msg.volume === 'number') {
-                $('stVol').innerText = `${msg.volume}%`;
-            }
-          } else if (msg.type === 'motor') {
-            // Cập nhật readout + speed bar (silent — không log)
-            const lEl = document.getElementById('joyL');
-            const rEl = document.getElementById('joyR');
-            if (lEl) lEl.innerText = msg.left;
-            if (rEl) rEl.innerText = msg.right;
-          } else if (msg.type === 'macro_status') {
-            macroState.recording = !!msg.recording;
-            macroState.playing   = !!msg.playing;
-            macroState.count     = msg.count || 0;
-            renderMacroStatus();
-          
-          } else if (msg.type === 'macro_list') {
-            macroSavedList = msg.items || [];
-            updateMacroDropdown();
-          } else if (msg.type === 'macro_reply') {
-            log('macro reply: ' + msg.msg + (msg.ok ? ' OK' : ' FAIL'));
-          } else if (msg.type === 'heartbeat') {
-            /* silent */
-          } else if (msg.type === 'hello' || msg.type === 'pong') {
-            /* silent */
-          } else {
-            log('WS recv: ' + ev.data);
-          }
-        };
-
-        ws.onclose = (e) => {
-          log(`WS closed code=${e.code}`);
-          if (wsManualClose) { wsManualClose = false; return; }
-          setTimeout(initWs, wsBackoff);
-          wsBackoff = Math.min(wsBackoff * 2, 30000);
-        };
-
-        ws.onerror = () => log('WS error');
-      } catch (e) {
-        log('initWs EXCEPTION: ' + e.message);
-        console.error(e);
-      }
-    }
-        // ===== Virtual Joystick =====
-    function joyClamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
-
-    class VirtualJoystick {
-      constructor() {
-        this.svg   = document.getElementById('joyBase');
-        this.knob  = document.getElementById('joyKnob');
-        if (!this.svg || !this.knob) return;
-
-        this.radius    = 62;     
-        this.deadzone  = 0.08;
-        this.active    = false;
-        this.pointerId = null;
-        this.x = 0; this.y = 0;
-        this.lastSendMs = 0;
-        this.sendInterval = 50; 
-        this.autoSendTimer = null;  
-
-        this.bind();
-      }
-
-      bind() {
-        this.svg.addEventListener('pointerdown',   e => this.onDown(e));
-        this.svg.addEventListener('pointermove',   e => this.onMove(e));
-        this.svg.addEventListener('pointerup',     e => this.onUp(e));
-        this.svg.addEventListener('pointercancel', e => this.onUp(e));
-      }
-
-      toLocal(e) {
-        const r = this.svg.getBoundingClientRect();
-        const cx = r.left + r.width  / 2;
-        const cy = r.top  + r.height / 2;
-        const scale = 200 / r.width;      // viewBox = 200x200
-        return { x: (e.clientX - cx) * scale,
-                 y: (e.clientY - cy) * scale };
-      }
-
-      onDown(e) {
-        if (this.active) return;
-        this.active    = true;
-        this.pointerId = e.pointerId;
-        try { this.svg.setPointerCapture(e.pointerId); } catch(_) {}
-        this.update(e);
-        this.startAutoSend();  
-        e.preventDefault();
-      }
-
-      onMove(e) {
-        if (!this.active || e.pointerId !== this.pointerId) return;
-        this.update(e);
-        e.preventDefault();
-      }
-
-      onUp(e) {
-        if (!this.active || e.pointerId !== this.pointerId) return;
-        this.active    = false;
-        this.pointerId = null;
-        try { this.svg.releasePointerCapture(e.pointerId); } catch(_) {}
-        this.stopAutoSend();
-        this.reset();
-      }
-
-      update(e) {
-        let p = this.toLocal(e);
-        const mag = Math.hypot(p.x, p.y);
-        if (mag > this.radius) {
-          p.x = p.x / mag * this.radius;
-          p.y = p.y / mag * this.radius;
-        }
-        // knob visual
-        this.knob.setAttribute('cx', p.x);
-        this.knob.setAttribute('cy', p.y);
-
-        // normalize [-1, 1]
-        let nx = p.x / this.radius;
-        let ny = p.y / this.radius;
-
-        // deadzone
-        if (Math.abs(nx) < this.deadzone) nx = 0;
-        if (Math.abs(ny) < this.deadzone) ny = 0;
-
-        // y đảo dấu: kéo lên trên màn hình = tiến = y dương
-        this.x =  nx;
-        this.y = -ny;
-
-        this.render();
-
-        // throttle send
-        const now = performance.now();
-        if (now - this.lastSendMs >= this.sendInterval) {
-          this.lastSendMs = now;
-          this.send();
-        }
-      }
-
-      reset() {
-        this.x = 0; this.y = 0;
-        this.knob.setAttribute('cx', 0);
-        this.knob.setAttribute('cy', 0);
-        this.render();
-        this.send();   // gửi (0,0) ngay lập tức
-      }
-      startAutoSend() {
-        if (this.autoSendTimer) return;
-        this.autoSendTimer = setInterval(() => {
-          if (this.active) this.send();
-        }, 150);   // 10Hz — đủ để reset watchdog 300ms
-      }
-
-      stopAutoSend() {
-        if (this.autoSendTimer) {
-          clearInterval(this.autoSendTimer);
-          this.autoSendTimer = null;
-        }
-      }
-
-      send() {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        ws.send(JSON.stringify({ type: 'vector', x: this.x, y: this.y }));
-      }
-
-      render() {
-        const l = Math.round(joyClamp(this.y + this.x, -1, 1) * 100);
-        const r = Math.round(joyClamp(this.y - this.x, -1, 1) * 100);
-        const xEl = document.getElementById('joyX');
-        const yEl = document.getElementById('joyY');
-        const lEl = document.getElementById('joyL');
-        const rEl = document.getElementById('joyR');
-        if (xEl) xEl.innerText = this.x.toFixed(2);
-        if (yEl) yEl.innerText = this.y.toFixed(2);
-        if (lEl) lEl.innerText = l;
-        if (rEl) rEl.innerText = r;
-      }
-    }
-
-    let joystick = null;
-
-    let macroPoller = null;
-
-    function fetchMacroStatusOnce() {
-      fetch('/api/macro/status')
-        .then(r => r.json())
-        .then(msg => {
+          if (typeof msg.volume === 'number') $('stVol').textContent = `${msg.volume}%`;
+        } else if (msg.type === 'motor') {
+          $('joyL').textContent = msg.left;
+          $('joyR').textContent = msg.right;
+        } else if (msg.type === 'macro_status') {
           macroState.recording = !!msg.recording;
-          macroState.playing   = !!msg.playing;
-          macroState.count     = msg.count || 0;
+          macroState.playing = !!msg.playing;
+          macroState.count = msg.count || 0;
           renderMacroStatus();
-        })
-        .catch(() => {});
+        } else if (msg.type === 'macro_list') {
+          macroSavedList = msg.items || [];
+          updateMacroDropdown();
+        } else if (msg.type === 'macro_reply') {
+          log('macro reply: ' + msg.msg + (msg.ok ? ' OK' : ' FAIL'));
+          toast('Macro: ' + msg.msg, msg.ok ? 'ok' : 'err');
+        } else if (msg.type === 'heartbeat' || msg.type === 'hello' || msg.type === 'pong') {
+          /* silent */
+        } else {
+          log('WS recv: ' + ev.data);
+        }
+      };
+
+      ws.onclose = (e) => {
+        log(`WS closed code=${e.code}`);
+        if (joystick && joystick.active) joystick.forceStop();
+        if (wsManualClose) { wsManualClose = false; setConn('err', 'Đã ngắt'); return; }
+        setConn('err', `Mất kết nối · thử lại sau ${Math.round(wsBackoff / 1000)}s`);
+        setTimeout(initWs, wsBackoff);
+        wsBackoff = Math.min(wsBackoff * 2, 30000);
+      };
+
+      ws.onerror = () => log('WS error');
+    } catch (e) {
+      log('initWs EXCEPTION: ' + e.message);
+      console.error(e);
     }
+  }
 
-    function startMacroPolling() {
-      if (macroPoller) return;
-      macroPoller = setInterval(fetchMacroStatusOnce, 1000);
-      fetchMacroStatusOnce();   // fetch ngay lập tức
+  // ===== Virtual Joystick =====
+  function joyClamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  class VirtualJoystick {
+    constructor() {
+      this.svg = $('joyBase');
+      this.knob = $('joyKnob');
+      if (!this.svg || !this.knob) return;
+      this.radius = 62;
+      this.deadzone = 0.08;
+      this.active = false;
+      this.pointerId = null;
+      this.x = 0; this.y = 0;
+      this.lastSendMs = 0;
+      this.sendInterval = 50;
+      this.autoSendTimer = null;
+      this.bind();
     }
-
-    function sendMacroCmd(cmd) {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        log('WS chưa sẵn sàng');
-        return;
-      }
-      ws.send(JSON.stringify({ type: 'macro', cmd: cmd }));
-      log('macro → ' + cmd);
-
-      // Fetch state sau 150ms (server đã xử lý xong)
-      setTimeout(fetchMacroStatusOnce, 150);
-
-      // Bật polling khi vào chế độ active
-      if (cmd === 'start_rec' || cmd === 'play') {
-        startMacroPolling();
-      } else if (cmd === 'stop_rec' || cmd === 'stop_play' || cmd === 'clear') {
-        // Fetch vài lần để chắc chắn lấy state cuối, rồi tắt poll sau 2s
-        setTimeout(fetchMacroStatusOnce, 500);
-        setTimeout(() => {
-          fetchMacroStatusOnce();
-          if (macroPoller) { clearInterval(macroPoller); macroPoller = null; }
-        }, 1500);
-      }
+    bind() {
+      this.svg.addEventListener('pointerdown', e => this.onDown(e));
+      this.svg.addEventListener('pointermove', e => this.onMove(e));
+      this.svg.addEventListener('pointerup', e => this.onUp(e));
+      this.svg.addEventListener('pointercancel', e => this.onUp(e));
+      this.svg.addEventListener('lostpointercapture', e => this.onUp(e));
     }
-
-    function renderMacroStatus() {
-      const st      = document.getElementById('macroStatus');
-      const btnRec  = document.getElementById('btnMacroRec');
-      const btnPlay = document.getElementById('btnMacroPlay');
-      if (!st || !btnRec || !btnPlay) return;
-
-      const { recording: rec, playing: play, count: n } = macroState;
-
-      // Nút Record / Stop toggle
-      if (rec) {
-        btnRec.textContent = '■ Dừng ghi';
-        btnRec.classList.add('active');
-      } else {
-        btnRec.textContent = '● Bắt đầu ghi';
-        btnRec.classList.remove('active');
-      }
-
-      // Nút Play
-      btnPlay.textContent = play ? '■ Dừng phát' : '▶ Phát lại';
-      btnPlay.classList.toggle('active', play);
-      // Disable Play khi đang record hoặc chưa có macro
-      btnPlay.disabled = rec || (!play && n === 0);
-
-      // Status
-      if (rec) {
-        st.textContent = '● Đang ghi... (' + n + ' bước)';
-        st.className = 'macro-status rec';
-      } else if (play) {
-        st.textContent = '▶ Đang phát... (' + n + ' bước)';
-        st.className = 'macro-status play';
-      } else if (n > 0) {
-        st.textContent = '✓ Đã lưu ' + n + ' bước';
-        st.className = 'macro-status';
-      } else {
-        st.textContent = 'Chưa có macro';
-        st.className = 'macro-status';
-      }
+    toLocal(e) {
+      const r = this.svg.getBoundingClientRect();
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      const scale = 200 / r.width;
+      return { x: (e.clientX - cx) * scale, y: (e.clientY - cy) * scale };
     }
-    
-    let macroSavedList = [];
-
-    function updateMacroDropdown() {
-      const sel = document.getElementById('macroSavedList');
-      if (!sel) return;
-      const cur = sel.value;
-      sel.innerHTML = '';
-      if (macroSavedList.length === 0) {
-        const o = document.createElement('option');
-        o.value = ''; o.textContent = '-- Chưa có macro nào --';
-        sel.appendChild(o);
-        return;
-      }
-      macroSavedList.forEach(n => {
-        const o = document.createElement('option');
-        o.value = n; o.textContent = n;
-        sel.appendChild(o);
-      });
-      if (macroSavedList.includes(cur)) sel.value = cur;
+    onDown(e) {
+      if (this.active) return;
+      this.active = true;
+      this.pointerId = e.pointerId;
+      this.svg.classList.add('active');
+      try { this.svg.setPointerCapture(e.pointerId); } catch (_) {}
+      this.update(e);
+      this.startAutoSend();
+      e.preventDefault();
     }
-
-    function sendMacroSave() {
-      const inp = document.getElementById('macroNameInput');
-      const name = (inp.value || '').trim();
-      if (!name) { log('Nhập tên macro trước'); return; }
-      if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-        log('Tên chỉ cho phép chữ, số, _, -'); return;
-      }
-      ws.send(JSON.stringify({ type: 'macro', cmd: 'save', name }));
-      log('macro → save ' + name);
+    onMove(e) {
+      if (!this.active || e.pointerId !== this.pointerId) return;
+      this.update(e);
+      e.preventDefault();
     }
-
-    function sendMacroLoad() {
-      const sel = document.getElementById('macroSavedList');
-      const name = sel.value;
-      if (!name) { log('Chọn macro để tải'); return; }
-      ws.send(JSON.stringify({ type: 'macro', cmd: 'load', name }));
-      log('macro → load ' + name);
+    onUp(e) {
+      if (!this.active || e.pointerId !== this.pointerId) return;
+      try { this.svg.releasePointerCapture(e.pointerId); } catch (_) {}
+      this.forceStop();
     }
-
-    function sendMacroDelete() {
-      const sel = document.getElementById('macroSavedList');
-      const name = sel.value;
-      if (!name) { log('Chọn macro để xoá'); return; }
-      if (!confirm('Xoá file macro "' + name + '"?')) return;
-      ws.send(JSON.stringify({ type: 'macro', cmd: 'delete', name }));
-      log('macro → delete ' + name);
+    forceStop() {
+      this.active = false;
+      this.pointerId = null;
+      this.svg.classList.remove('active');
+      this.stopAutoSend();
+      this.reset();
     }
+    update(e) {
+      const p = this.toLocal(e);
+      const mag = Math.hypot(p.x, p.y);
+      if (mag > this.radius) { p.x = p.x / mag * this.radius; p.y = p.y / mag * this.radius; }
+      this.knob.setAttribute('cx', p.x);
+      this.knob.setAttribute('cy', p.y);
+      let nx = p.x / this.radius, ny = p.y / this.radius;
+      if (Math.abs(nx) < this.deadzone) nx = 0;
+      if (Math.abs(ny) < this.deadzone) ny = 0;
+      this.x = nx;
+      this.y = -ny;   // kéo lên = tiến = y dương
+      this.render();
+      const now = performance.now();
+      if (now - this.lastSendMs >= this.sendInterval) { this.lastSendMs = now; this.send(); }
+    }
+    reset() {
+      this.x = 0; this.y = 0;
+      this.knob.setAttribute('cx', 0);
+      this.knob.setAttribute('cy', 0);
+      this.render();
+      this.send();
+    }
+    startAutoSend() {
+      if (this.autoSendTimer) return;
+      this.autoSendTimer = setInterval(() => { if (this.active) this.send(); }, 150); // giữ watchdog 300ms
+    }
+    stopAutoSend() {
+      if (this.autoSendTimer) { clearInterval(this.autoSendTimer); this.autoSendTimer = null; }
+    }
+    send() {
+      if (!wsOpen()) return;
+      ws.send(JSON.stringify({ type: 'vector', x: this.x, y: this.y }));
+    }
+    render() {
+      const l = Math.round(joyClamp(this.y + this.x, -1, 1) * 100);
+      const r = Math.round(joyClamp(this.y - this.x, -1, 1) * 100);
+      $('joyX').textContent = this.x.toFixed(2);
+      $('joyY').textContent = this.y.toFixed(2);
+      $('joyL').textContent = l;
+      $('joyR').textContent = r;
+    }
+  }
 
-    // ===== Boot =====
-    window.addEventListener('load', () => {
-      log('page loaded');
-      init();
-      const btn = document.getElementById('btnChatSend');
-      if (btn) btn.addEventListener('click', sendChat);
-      const inp = document.getElementById('chatInput');
-      if (inp) inp.addEventListener('keydown', e => {
-        if (e.key === 'Enter') sendChat();
-      });
-      try {
-        joystick = new VirtualJoystick();
-        log('VirtualJoystick ready');
-      } catch (e) {
-        log('Joystick init error: ' + e.message);
-      }
-      // Mode toggle D-pad / Joystick
-      const dpadEl   = document.querySelector('.dpad-container');
-      const joyEl    = document.querySelector('.joystick-wrap');
-      const readEl   = document.querySelector('.joy-readout');
+  // ===== Macro =====
+  let macroPoller = null;
+  let macroPollStart = 0;
+  let macroSavedList = [];
 
-      function applyMode(mode) {
-        if (!dpadEl || !joyEl) return;
-        dpadEl.classList.toggle('hidden', mode === 'joystick');
-        joyEl.classList.toggle('hidden',  mode === 'dpad');
-        if (readEl) readEl.classList.toggle('hidden', mode === 'dpad');
-        localStorage.setItem('joyMode', mode);
-      }
-
-      document.querySelectorAll('input[name="joyMode"]').forEach(r => {
-        r.addEventListener('change', e => applyMode(e.target.value));
-      });
-
-      const savedMode = localStorage.getItem('joyMode') || 'both';
-      applyMode(savedMode);
-      const savedRadio = document.querySelector(`input[name="joyMode"][value="${savedMode}"]`);
-      if (savedRadio) savedRadio.checked = true;
-            // Macro buttons
-      const btnRec   = document.getElementById('btnMacroRec');
-      const btnPlay  = document.getElementById('btnMacroPlay');
-      const btnClear = document.getElementById('btnMacroClear');
-
-      if (btnRec) btnRec.addEventListener('click', () => {
-        if (macroState.recording) sendMacroCmd('stop_rec');
-        else                       sendMacroCmd('start_rec');
-      });
-
-      if (btnPlay) btnPlay.addEventListener('click', () => {
-        if (macroState.playing) sendMacroCmd('stop_play');
-        else                     sendMacroCmd('play');
-      });
-
-      if (btnClear) btnClear.addEventListener('click', () => sendMacroCmd('clear'));
-
-      renderMacroStatus();
-
-      const btnMSave = document.getElementById('btnMacroSave');
-      const btnMLoad = document.getElementById('btnMacroLoad');
-      const btnMDel  = document.getElementById('btnMacroDelete');
-      if (btnMSave) btnMSave.addEventListener('click', sendMacroSave);
-      if (btnMLoad) btnMLoad.addEventListener('click', sendMacroLoad);
-      if (btnMDel)  btnMDel.addEventListener('click',  sendMacroDelete);
+  function fetchMacroStatusOnce() {
+    fetch('/api/macro/status', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(msg => {
+        macroState.recording = !!msg.recording;
+        macroState.playing = !!msg.playing;
+        macroState.count = msg.count || 0;
+        renderMacroStatus();
+        // Tự tắt polling khi đã hết ghi/phát (tránh poll mãi sau khi macro phát xong)
+        if (macroPoller && !macroState.recording && !macroState.playing && Date.now() - macroPollStart > 2500) stopMacroPolling();
+      })
+      .catch(() => {});
+  }
+  function startMacroPolling() {
+    macroPollStart = Date.now();
+    if (macroPoller) return;
+    macroPoller = setInterval(fetchMacroStatusOnce, 1000);
+    fetchMacroStatusOnce();
+  }
+  function stopMacroPolling() {
+    if (macroPoller) { clearInterval(macroPoller); macroPoller = null; }
+  }
+  function sendMacroCmd(cmd) {
+    if (!wsSend({ type: 'macro', cmd: cmd })) return;
+    log('macro → ' + cmd);
+    setTimeout(fetchMacroStatusOnce, 150);
+    if (cmd === 'start_rec' || cmd === 'play') startMacroPolling();
+    else if (cmd === 'stop_rec' || cmd === 'stop_play' || cmd === 'clear') {
+      setTimeout(fetchMacroStatusOnce, 500);
+      setTimeout(fetchMacroStatusOnce, 1500);
+    }
+  }
+  function renderMacroStatus() {
+    const st = $('macroStatus'), btnRec = $('btnMacroRec'), btnPlay = $('btnMacroPlay');
+    if (!st || !btnRec || !btnPlay) return;
+    const { recording: rec, playing: play, count: n } = macroState;
+    btnRec.textContent = rec ? '■ Dừng ghi' : '● Bắt đầu ghi';
+    btnRec.classList.toggle('active', rec);
+    btnPlay.textContent = play ? '■ Dừng phát' : '▶ Phát lại';
+    btnPlay.classList.toggle('active', play);
+    btnPlay.disabled = rec || (!play && n === 0);
+    $('btnMacroClear').disabled = rec || play || n === 0;
+    if (rec) { st.textContent = '● Đang ghi… (' + n + ' bước)'; st.className = 'macro-status rec'; }
+    else if (play) { st.textContent = '▶ Đang phát… (' + n + ' bước)'; st.className = 'macro-status play'; }
+    else if (n > 0) { st.textContent = '✓ Có ' + n + ' bước trong bộ nhớ'; st.className = 'macro-status'; }
+    else { st.textContent = 'Chưa có macro'; st.className = 'macro-status'; }
+  }
+  function updateMacroDropdown() {
+    const sel = $('macroSavedList');
+    if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = '';
+    if (macroSavedList.length === 0) {
+      const o = document.createElement('option');
+      o.value = ''; o.textContent = '-- Chưa có macro nào --';
+      sel.appendChild(o);
+      return;
+    }
+    macroSavedList.forEach(n => {
+      const o = document.createElement('option');
+      o.value = n; o.textContent = n;
+      sel.appendChild(o);
     });
-  </script>
+    if (macroSavedList.includes(cur)) sel.value = cur;
+  }
+  function sendMacroSave() {
+    const inp = $('macroNameInput');
+    const name = (inp.value || '').trim();
+    if (!name) { toast('Nhập tên macro trước', 'warn'); inp.focus(); return; }
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) { toast('Tên chỉ được dùng chữ không dấu, số, _ và -', 'err'); inp.classList.add('bad'); return; }
+    inp.classList.remove('bad');
+    if (macroSavedList.includes(name) && !confirm('Đã có macro "' + name + '". Ghi đè?')) return;
+    if (wsSend({ type: 'macro', cmd: 'save', name })) log('macro → save ' + name);
+  }
+  function sendMacroLoad() {
+    const name = $('macroSavedList').value;
+    if (!name) { toast('Chọn macro để tải', 'warn'); return; }
+    if (wsSend({ type: 'macro', cmd: 'load', name })) { log('macro → load ' + name); setTimeout(fetchMacroStatusOnce, 300); }
+  }
+  function sendMacroDelete() {
+    const name = $('macroSavedList').value;
+    if (!name) { toast('Chọn macro để xoá', 'warn'); return; }
+    if (!confirm('Xoá file macro "' + name + '"?')) return;
+    if (wsSend({ type: 'macro', cmd: 'delete', name })) log('macro → delete ' + name);
+  }
+
+  // ===== Dừng khẩn cấp =====
+  function emergencyStop() {
+    if (joystick && joystick.active) joystick.forceStop();
+    else if (wsOpen()) ws.send(JSON.stringify({ type: 'vector', x: 0, y: 0 }));
+    if (macroState.playing && wsOpen()) ws.send(JSON.stringify({ type: 'macro', cmd: 'stop_play' }));
+    sendCtrl('stop');
+    toast('Đã gửi lệnh DỪNG', 'warn', 1500);
+  }
+
+  // ===== Bàn phím =====
+  const KEYMAP = {
+    ArrowUp: 'forward', KeyW: 'forward', ArrowDown: 'backward', KeyS: 'backward',
+    ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', Space: 'stop'
+  };
+  let lastKeySend = 0;
+  function flashBtn(cmd) {
+    const b = document.querySelector(`.dpad [data-cmd="${cmd}"]`);
+    if (!b) return;
+    b.classList.add('pressed');
+    setTimeout(() => b.classList.remove('pressed'), 160);
+  }
+  function onKey(e) {
+    if (e.key === 'Escape') { emergencyStop(); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable]')) return;
+    if (currentTab !== 'control') return;
+    const cmd = KEYMAP[e.code];
+    if (!cmd) return;
+    e.preventDefault();
+    const now = Date.now();
+    const gap = cmd === 'stop' ? 0 : Math.max(120, Number($('stepMs').value) * 0.8);
+    if (e.repeat && now - lastKeySend < gap) return;
+    lastKeySend = now;
+    flashBtn(cmd);
+    sendCtrl(cmd);
+  }
+
+  // ===== Boot =====
+  window.addEventListener('load', () => {
+    applyTheme(LS.get('theme', 'auto'));
+    $('themeBtn').addEventListener('click', cycleTheme);
+
+    document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => showTab(t.dataset.tab)));
+    showTab(LS.get('tab', 'control'));
+
+    log('page loaded');
+    init();
+
+    // Điều khiển + servo + gọi robot (data-cmd)
+    document.addEventListener('click', e => {
+      const c = e.target.closest('[data-cmd]');
+      if (c) { sendCtrl(c.dataset.cmd); return; }
+      const m = e.target.closest('[data-music]');
+      if (m) { sendMusic(m.dataset.music, m.dataset.mood ? { mood: m.dataset.mood } : {}); return; }
+      const h = e.target.closest('[data-hint]');
+      if (h) {
+        const el = $(h.dataset.hint);
+        if (el) { const open = el.classList.toggle('hidden') === false; h.setAttribute('aria-expanded', open ? 'true' : 'false'); }
+        return;
+      }
+      const n = e.target.closest('[data-nudge]');
+      if (n) { testNudge(n.dataset.nudge); return; }
+      const say = e.target.closest('[data-say]');
+      if (say) { sendChat(say.dataset.say); return; }
+      const eye = e.target.closest('.pw-eye');
+      if (eye) togglePwEye(eye);
+    });
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('blur', () => { if (joystick && joystick.active) joystick.forceStop(); });
+
+    $('btnReboot').addEventListener('click', confirmReboot);
+    $('estop').addEventListener('click', emergencyStop);
+
+    // Chat & nhạc
+    $('btnChatSend').addEventListener('click', () => sendChat());
+    $('chatInput').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
+    $('btnMusicSearch').addEventListener('click', searchMusic);
+    $('musicQuery').addEventListener('keydown', e => { if (e.key === 'Enter') searchMusic(); });
+
+    // Cài đặt
+    document.querySelectorAll('#setCard input[type=range]').forEach(r => r.addEventListener('input', () => {
+      syncVal(r.dataset.out, r.value);
+      $('setDirty').classList.remove('hidden');
+    }));
+    $('btnSaveSettings').addEventListener('click', saveSettings);
+    $('btnSaveLife').addEventListener('click', saveLife);
+    document.querySelectorAll('#lifeCard input[type=number]').forEach(i => i.addEventListener('input', () => i.classList.remove('bad')));
+
+    // Mật khẩu
+    $('authNew').addEventListener('input', updatePw);
+    $('authNew2').addEventListener('input', updatePw);
+    $('authNew2').addEventListener('keydown', e => { if (e.key === 'Enter' && !$('btnPw').disabled) changePassword(); });
+    $('btnPw').addEventListener('click', changePassword);
+
+    // Nhật ký
+    $('logFilter').addEventListener('change', e => { logFilter = e.target.value; applyLogFilter(); });
+    $('logAuto').addEventListener('change', e => { logAuto = e.target.checked; });
+    $('btnLogClear').addEventListener('click', () => { $('logBox').innerHTML = ''; unseenErr = 0; updateErrBadge(); });
+    $('btnLogSave').addEventListener('click', downloadLog);
+
+    // Joystick
+    try { joystick = new VirtualJoystick(); log('VirtualJoystick ready'); }
+    catch (e) { log('Joystick init error: ' + e.message); }
+
+    // Chế độ D-pad / Joystick
+    const dpadEl = document.querySelector('.dpad');
+    const joyEl = document.querySelector('.joy');
+    const readEl = document.querySelector('.readout');
+    function applyMode(mode) {
+      dpadEl.classList.toggle('hidden', mode === 'joystick');
+      joyEl.classList.toggle('hidden', mode === 'dpad');
+      readEl.classList.toggle('hidden', mode === 'dpad');
+      document.querySelectorAll('#joyModeSeg label').forEach(l => l.classList.toggle('on', l.querySelector('input').value === mode));
+      LS.set('joyMode', mode);
+    }
+    document.querySelectorAll('input[name="joyMode"]').forEach(r => r.addEventListener('change', e => applyMode(e.target.value)));
+    const savedMode = LS.get('joyMode', 'both');
+    const savedRadio = document.querySelector(`input[name="joyMode"][value="${savedMode}"]`);
+    if (savedRadio) savedRadio.checked = true;
+    applyMode(savedRadio ? savedMode : 'both');
+
+    // Macro
+    $('btnMacroRec').addEventListener('click', () => sendMacroCmd(macroState.recording ? 'stop_rec' : 'start_rec'));
+    $('btnMacroPlay').addEventListener('click', () => sendMacroCmd(macroState.playing ? 'stop_play' : 'play'));
+    $('btnMacroClear').addEventListener('click', () => { if (confirm('Xoá macro đang có trong bộ nhớ tạm?')) sendMacroCmd('clear'); });
+    $('btnMacroSave').addEventListener('click', sendMacroSave);
+    $('macroNameInput').addEventListener('keydown', e => { if (e.key === 'Enter') sendMacroSave(); });
+    $('btnMacroLoad').addEventListener('click', sendMacroLoad);
+    $('btnMacroDelete').addEventListener('click', sendMacroDelete);
+    document.querySelectorAll('#setCard input[type=range]').forEach(r => syncVal(r.dataset.out, r.value));
+    renderMacroStatus();
+  });
+</script>
 
 </body>
 </html>
 )HTML";
 
 }  // namespace
+
 
 RobotWebUiServer::RobotWebUiServer(DualDcMotorController* wheel_motor,
                                    DualServoController* head_servo)
@@ -1208,6 +1429,7 @@ bool RobotWebUiServer::Start(int port) {
     if (server_handle_ != nullptr) {
         return true;
     }
+    webauth::Init();
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = port;
@@ -1342,32 +1564,50 @@ void RobotWebUiServer::SaveConfig() {
 }
 
 esp_err_t RobotWebUiServer::IndexHandler(httpd_req_t* req) {
+    if (!webauth::Check(req)) {
+        return ESP_OK;
+    }
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_send(req, kWebUiHtml, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
 esp_err_t RobotWebUiServer::ApiStatusHandler(httpd_req_t* req) {
+    if (!webauth::Check(req)) {
+        return ESP_OK;
+    }
     auto* self = static_cast<RobotWebUiServer*>(req->user_ctx);
     return self->HandleStatus(req);
 }
 
 esp_err_t RobotWebUiServer::ApiSettingsGetHandler(httpd_req_t* req) {
+    if (!webauth::Check(req)) {
+        return ESP_OK;
+    }
     auto* self = static_cast<RobotWebUiServer*>(req->user_ctx);
     return self->HandleSettingsGet(req);
 }
 
 esp_err_t RobotWebUiServer::ApiSettingsPostHandler(httpd_req_t* req) {
+    if (!webauth::Check(req)) {
+        return ESP_OK;
+    }
     auto* self = static_cast<RobotWebUiServer*>(req->user_ctx);
     return self->HandleSettingsPost(req);
 }
 
 esp_err_t RobotWebUiServer::ApiControlHandler(httpd_req_t* req) {
+    if (!webauth::Check(req)) {
+        return ESP_OK;
+    }
     auto* self = static_cast<RobotWebUiServer*>(req->user_ctx);
     return self->HandleControl(req);
 }
 
 esp_err_t RobotWebUiServer::ApiMusicHandler(httpd_req_t* req) {
+    if (!webauth::Check(req)) {
+        return ESP_OK;
+    }
     auto* self = static_cast<RobotWebUiServer*>(req->user_ctx);
     return self->HandleMusic(req);
 }
@@ -1444,6 +1684,7 @@ esp_err_t RobotWebUiServer::HandleSettingsGet(httpd_req_t* req) {
     if (life_behavior_ != nullptr) {
         life_behavior_->AppendConfigToJson(root);
     }
+    cJSON_AddNumberToObject(root, "auth_default", webauth::IsDefaultPassword() ? 1 : 0);
 
     char* json_text = cJSON_PrintUnformatted(root);
     std::string payload = json_text ? json_text : "{}";
@@ -1500,6 +1741,14 @@ esp_err_t RobotWebUiServer::HandleSettingsPost(httpd_req_t* req) {
     }
     if (life_behavior_ != nullptr) {
         life_behavior_->ApplyConfigFromJson(root);
+    }
+    auto* new_pw = cJSON_GetObjectItem(root, "new_password");
+    if (cJSON_IsString(new_pw) && new_pw->valuestring != nullptr) {
+        if (!webauth::SetPassword(new_pw->valuestring)) {
+            cJSON_Delete(root);
+            SendJson(req, 400, "{\"ok\":false,\"message\":\"Mat khau phai tu 6 den 32 ky tu\"}");
+            return ESP_OK;
+        }
     }
 
     cJSON_Delete(root);
@@ -1751,6 +2000,11 @@ esp_err_t RobotWebUiServer::WsHandlerEntry(httpd_req_t* req) {
     auto* self = static_cast<RobotWebUiServer*>(req->user_ctx);
     if (self == nullptr)
         return ESP_FAIL;
+    if (req->method == HTTP_GET && !(webauth::OriginOk(req) && webauth::IsAuthorized(req))) {
+        ESP_LOGW(TAG, "WS handshake bi tu choi (chua dang nhap hoac sai Origin)");
+        httpd_sess_trigger_close(self->server_handle_, httpd_req_to_sockfd(req));
+        return ESP_FAIL;
+    }
     return self->HandleWs(req);
 }
 
@@ -2738,6 +2992,9 @@ void RobotWebUiServer::ExecuteMacroStep(const MacroStep& s) {
     BroadcastStatusNow();
 }
 esp_err_t RobotWebUiServer::ApiMacroStatusHandler(httpd_req_t* req) {
+    if (!webauth::Check(req)) {
+        return ESP_OK;
+    }
     auto* self = static_cast<RobotWebUiServer*>(req->user_ctx);
     return self->HandleMacroStatus(req);
 }

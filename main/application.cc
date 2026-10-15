@@ -1590,7 +1590,9 @@ bool Application::StartSdMusicPlaybackLocked(const std::string& path) {
     // Stop current playback first
     sd_music_stop_requested_ = true;
     audio_service_.RequestPlaybackStop();
-
+ 
+    // Cho task phat cu thoat han (toi da 1.5s) TRUOC khi xoa co dung.
+    // Neu xoa co ngay, task cu khong kip thay lenh dung va hai bai phat chong len nhau.
     {
         int waited_ms = 0;
         while (sd_music_tasks_running_.load() > 0 && waited_ms < 1500) {
@@ -1601,28 +1603,28 @@ bool Application::StartSdMusicPlaybackLocked(const std::string& path) {
             ESP_LOGW(TAG, "Task nhac cu chua thoat sau %d ms, van phat bai moi", waited_ms);
         }
     }
-
+ 
     sd_music_stop_requested_ = false;
     audio_service_.ClearPlaybackStopRequest();
     sd_music_active_.store(true);
-
+ 
     struct SdMusicTaskArg {
         std::string path;
         uint32_t generation;
     };
-
+ 
     uint32_t generation = ++sd_music_generation_;
     auto* task_arg = new (std::nothrow) SdMusicTaskArg{path, generation};
     if (task_arg == nullptr) {
         ESP_LOGE(TAG, "No memory for SD music task arg");
         return false;
     }
+ 
     sd_music_tasks_running_.fetch_add(1);
-
     BaseType_t ok = xTaskCreate([](void* arg) {
         std::unique_ptr<SdMusicTaskArg> task_arg_ptr(static_cast<SdMusicTaskArg*>(arg));
         auto& app = Application::GetInstance();
-
+ 
         bool played = false;
         uint32_t generation = 0;
         if (task_arg_ptr) {
@@ -1635,7 +1637,11 @@ bool Application::StartSdMusicPlaybackLocked(const std::string& path) {
                 played = app.GetAudioService().PlayOggFile(task_arg_ptr->path.c_str());
             }
         }
-
+ 
+        // Task phat nhac da ket thuc: giam bo dem NGAY (truoc vTaskDelete).
+        app.sd_music_tasks_running_.fetch_sub(1);
+        ESP_LOGI(TAG, "SD music task exit, running=%d", app.sd_music_tasks_running_.load());
+ 
         app.Schedule([played, generation]() {
             auto& self = Application::GetInstance();
             bool stopped = false;
@@ -1649,7 +1655,7 @@ bool Application::StartSdMusicPlaybackLocked(const std::string& path) {
                 if (is_current) {
                     self.sd_music_task_handle_ = nullptr;
                     self.sd_music_active_.store(false);
-
+ 
                     if (!stopped && played && self.sd_music_autoplay_next_ && !self.sd_music_playlist_.empty()) {
                         if (self.sd_music_shuffle_mode_) {
                             self.sd_music_index_ = static_cast<int>(esp_random() % self.sd_music_playlist_.size());
@@ -1665,7 +1671,7 @@ bool Application::StartSdMusicPlaybackLocked(const std::string& path) {
                     }
                 }
             }
-
+ 
             if (is_current && should_autoplay_next) {
                 ESP_LOGI(TAG, "SD autoplay next: %s", next_path.c_str());
                 if (!self.StartSdMusicPlaybackPath(next_path)) {
@@ -1674,7 +1680,7 @@ bool Application::StartSdMusicPlaybackLocked(const std::string& path) {
                 }
                 return;
             }
-
+ 
             if (is_current && !stopped) {
                 auto display = Board::GetInstance().GetDisplay();
                 if (played) {
@@ -1684,10 +1690,10 @@ bool Application::StartSdMusicPlaybackLocked(const std::string& path) {
                 }
             }
         });
-
+ 
         vTaskDelete(nullptr);
     }, "sd_music", 4096 * 3, task_arg, 3, &sd_music_task_handle_);
-
+ 
     if (ok != pdPASS) {
         delete task_arg;
         sd_music_tasks_running_.fetch_sub(1);
@@ -1704,6 +1710,8 @@ bool Application::StartSdMusicPlaybackPath(const std::string& path) {
     return StartSdMusicPlaybackLocked(path);
 }
 
+// ===== THAY THE HAM CU: Application::StopSdCardMusic =====
+ 
 bool Application::StopSdCardMusic() {
     {
         std::lock_guard<std::mutex> lock(sd_music_mutex_);
@@ -1712,16 +1720,20 @@ bool Application::StopSdCardMusic() {
         sd_music_active_.store(false);
         audio_service_.RequestPlaybackStop();
     }
+ 
+    // Cho task phat nhac thoat han (toi da 1s) roi moi tat codec,
+    // de tranh tat DMA khi task nhac con dang ghi.
     for (int waited_ms = 0; sd_music_tasks_running_.load() > 0 && waited_ms < 1000; waited_ms += 20) {
         vTaskDelay(pdMS_TO_TICKS(20));
     }
-
+    ESP_LOGI(TAG, "StopSdCardMusic: tasks_running=%d sau khi cho", sd_music_tasks_running_.load());
+ 
     auto codec = Board::GetInstance().GetAudioCodec();
     if (codec != nullptr && codec->output_enabled()) {
         ESP_LOGI(TAG, "Hard-stop: disabling codec output to flush DMA");
         codec->EnableOutput(false);
     }
-
+ 
     vTaskDelay(pdMS_TO_TICKS(80));
     return true;
 }
