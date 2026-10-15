@@ -324,18 +324,31 @@ constexpr const char* kWebUiHtml = R"HTML(
         <div>L: <b><span id="joyL">0</span></b></div>
         <div>R: <b><span id="joyR">0</span></b></div>
       </div>
-        <!-- Card 5: Chat với Robot -->
-        <div class="card" id="chatCard">
-        <div class="card-title">💬 Chat với Robot</div>
-        <div id="chatMessages">
-            <div class="chat-msg-sys">Nhập lệnh: "đi thẳng 2 giây", "dừng", "gật đầu", ...</div>
-        </div>
-        <div id="chatInputRow">
-            <input type="text" id="chatInput"
-                placeholder="Nhập lệnh (vd: đi thẳng 2 giây)" />
-            <button id="btnChatSend">Gửi</button>
-        </div>
-        </div>
+        
+    </div>
+        <!-- Card: Chat & Lệnh -->
+    <div class="card" id="chatCard">
+      <div class="card-title">💬 Chat & Lệnh</div>
+      <div id="chatMessages">
+        <div class="chat-msg-sys">Nhập lệnh: "đi thẳng 2 giây", "dừng", "gật đầu", "phát nhạc", "dừng nhạc"...</div>
+      </div>
+      <div id="chatInputRow">
+        <input type="text" id="chatInput" placeholder="Nhập lệnh (vd: phát nhạc, đi thẳng 2 giây)" />
+        <button id="btnChatSend">Gửi</button>
+      </div>
+    </div>
+
+    <!-- Card: Gọi robot & Hệ thống -->
+    <div class="card" id="sysCard">
+      <div class="card-title">🤖 Gọi robot & Hệ thống</div>
+      <div class="btn-grid">
+        <button class="btn-action" onclick="sendCtrl('robot_call')">📣 Gọi / Ngắt robot</button>
+        <button class="btn-action" style="border-color: var(--danger); color: var(--danger);" onclick="confirmReboot()">🔄 Khởi động lại</button>
+      </div>
+      <div style="font-size:12px; color: var(--text-dim); margin-top:8px; line-height:1.45;">
+        <b>Gọi / Ngắt robot</b>: giống nhấn nút BOOT hoặc chạm 2 lần trên robot. Robot đang rảnh thì bắt đầu nghe, đang nghe hoặc đang nói thì ngắt.<br>
+        <b>Khởi động lại</b>: robot tắt rồi bật lại trong vài giây. Trang web sẽ tự kết nối lại khi robot lên.
+      </div>
     </div>
 
     <!-- Card 2: Hành động Cổ/Đầu -->
@@ -589,6 +602,11 @@ constexpr const char* kWebUiHtml = R"HTML(
 
     async function testNudge(dir) {
       await apiPost('/api/settings', { ...lifePayload(), life_test: dir });
+    }
+    function confirmReboot() {
+      if (confirm('Khởi động lại robot? Robot sẽ tạm thời mất kết nối trong vài giây.')) {
+        sendCtrl('robot_reboot');
+      }
     }
 
     // ===== Init =====
@@ -1439,6 +1457,23 @@ esp_err_t RobotWebUiServer::HandleControl(httpd_req_t* req) {
     }
 
     std::string action = action_json->valuestring;
+        // === He thong: goi/ngat tro chuyen va khoi dong lai (xu ly som, khong ghi vao macro) ===
+    if (action == "robot_call") {
+        cJSON_Delete(root);
+        Application::GetInstance().ToggleChatState();
+        SendJson(req, 200, "{\"ok\":true,\"message\":\"Da gui lenh goi/ngat robot\"}");
+        return ESP_OK;
+    }
+    if (action == "robot_reboot") {
+        cJSON_Delete(root);
+        SendJson(req, 200, "{\"ok\":true,\"message\":\"Robot dang khoi dong lai\"}");
+        ESP_LOGW(TAG, "Reboot requested from WebUI");
+        Application::GetInstance().Schedule([]() {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            Application::GetInstance().Reboot();
+        });
+        return ESP_OK;
+    }
 
     int move_speed;
     int turn_speed;
