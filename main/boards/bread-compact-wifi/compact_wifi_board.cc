@@ -13,6 +13,7 @@
 #include "rc_sbus_controller.h"
 #include "robot_web_ui_server.h"
 #include "robot_control_hub.h"
+#include "robot_life_behavior.h"
 #include "led/single_led.h"
 #include "assets/lang_config.h"
 
@@ -54,6 +55,7 @@ private:
     DualServoController* head_servo_ = nullptr;
     RobotWebUiServer* web_ui_server_ = nullptr;
     RobotControlHub* control_hub_ = nullptr;
+    RobotLifeBehavior* life_behavior_ = nullptr;
 
     void InitializeDisplayI2c() {
         i2c_master_bus_config_t bus_config = {
@@ -364,6 +366,14 @@ private:
             control_hub_ = new RobotControlHub(wheel_motor_, head_servo_, GetDisplay());
             control_hub_->RegisterTools();
         }
+        if (control_hub_ == nullptr) {
+            control_hub_ = new RobotControlHub(wheel_motor_, head_servo_, GetDisplay());
+            control_hub_->RegisterTools();
+        }
+
+        if (life_behavior_ == nullptr) {
+            life_behavior_ = new RobotLifeBehavior(wheel_motor_, head_servo_);
+        }
     }
 
     void InitializeRobotWebUi() {
@@ -388,11 +398,11 @@ public:
         volume_down_button_(VOLUME_DOWN_BUTTON_GPIO) {
         InitializeDisplayI2c();
         InitializeSsd1306Display();
-
-#ifdef CONFIG_BREAD_COMPACT_WIFI_DUAL_OLED
-        InitializeDisplay2I2c();
-        InitializeSecondSsd1306Display();
-#endif
+//TODO: DualOledDisplay chưa chạy được, tạm comment
+// #ifdef CONFIG_BREAD_COMPACT_WIFI_DUAL_OLED
+//         InitializeDisplay2I2c();
+//         InitializeSecondSsd1306Display();
+// #endif
 
         InitializeSdCard();
         InitializeButtons();
@@ -400,6 +410,9 @@ public:
     }
 
         virtual ~CompactWifiBoard() {
+        delete life_behavior_;
+        life_behavior_ = nullptr;
+
         delete control_hub_;
         control_hub_ = nullptr;
 
@@ -449,6 +462,9 @@ public:
         WifiBoard::StartNetwork();
         vTaskDelay(pdMS_TO_TICKS(1000));
         InitializeRobotWebUi();
+        if (life_behavior_ != nullptr) {
+            life_behavior_->Start();
+        }
     }
 };
 

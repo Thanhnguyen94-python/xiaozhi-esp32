@@ -20,6 +20,7 @@ const char* kWhitelist[] = {
     "Application",
     "McpServer",
     "CompactWifiBoard",
+    "RobotLife",
 };
 
 bool IsTagWhitelisted(const char* tag, size_t len) {
