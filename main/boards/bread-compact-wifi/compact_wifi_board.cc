@@ -204,15 +204,24 @@ private:
             }
             app.ToggleChatState();
         });
-        // Touch sensor GPIO47: trigger on PRESS_DOWN to avoid missing click/release events
-        // on some capacitive modules. Add debounce to prevent bounce/repeat toggles.
         touch_button_.OnPressDown([this]() {
-            static int64_t s_last_touch_us = 0;
+            static int64_t s_last_edge_us = 0;    // lan cham gan nhat (ke ca lan bi loc)
+            static int64_t s_first_touch_us = 0;  // lan cham dau tien cua mot cap
+            constexpr int64_t kMinGapUs = 250000;   // 2 lan cham phai cach nhau >= 250 ms (loc nhieu/doi)
+            constexpr int64_t kWindowUs = 1500000;  // lan cham thu 2 phai nam trong 1.5 giay
+
             int64_t now_us = esp_timer_get_time();
-            if ((now_us - s_last_touch_us) < 400000) {
+            if ((now_us - s_last_edge_us) < kMinGapUs) {
                 return;
             }
-            s_last_touch_us = now_us;
+            s_last_edge_us = now_us;
+
+            if (s_first_touch_us == 0 || (now_us - s_first_touch_us) > kWindowUs) {
+                s_first_touch_us = now_us;  // day la lan cham thu 1, cho lan thu 2
+                return;
+            }
+
+            s_first_touch_us = 0;  // da du 2 lan cham hop le
             Application::GetInstance().ToggleChatState();
         });
 
