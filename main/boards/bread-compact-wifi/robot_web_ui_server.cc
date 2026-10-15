@@ -326,17 +326,6 @@ constexpr const char* kWebUiHtml = R"HTML(
       </div>
         
     </div>
-        <!-- Card: Chat & Lệnh -->
-    <div class="card" id="chatCard">
-      <div class="card-title">💬 Chat & Lệnh</div>
-      <div id="chatMessages">
-        <div class="chat-msg-sys">Nhập lệnh: "đi thẳng 2 giây", "dừng", "gật đầu", "phát nhạc", "dừng nhạc"...</div>
-      </div>
-      <div id="chatInputRow">
-        <input type="text" id="chatInput" placeholder="Nhập lệnh (vd: phát nhạc, đi thẳng 2 giây)" />
-        <button id="btnChatSend">Gửi</button>
-      </div>
-    </div>
 
     <!-- Card: Gọi robot & Hệ thống -->
     <div class="card" id="sysCard">
@@ -399,67 +388,148 @@ constexpr const char* kWebUiHtml = R"HTML(
     </div>
         <!-- Card 5: Hành vi "có sự sống" -->
     <div class="card" id="lifeCard">
-      <style>
+    <style>
         #lifeCard .lf-hint { font-size: 12px; color: var(--text-dim); margin: 3px 0 10px 0; line-height: 1.45; }
         #lifeCard .lf-warn { color: #ffb74d; }
         #lifeCard input[type=number] { width: 100%; background: #111a2e; border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 8px; }
         #lifeCard .lf-row { display: flex; gap: 8px; }
         #lifeCard .lf-row > div { flex: 1; }
         #lifeCard .lf-sep { border-top: 1px solid var(--border); margin: 12px 0; }
-        #lifeCard label.lf-chk { display: flex; gap: 8px; align-items: center; cursor: pointer; font-size: 14px; }
-      </style>
-      <div class="card-title">🌱 Hành vi "có sự sống"</div>
-      <div class="lf-hint">Robot tự gật/lắc đầu và nhích nhẹ khi trò chuyện để trông sinh động hơn. Chỉnh xong nhớ bấm "Lưu". Giá trị được nhớ cả khi tắt nguồn.</div>
+        
+        /* Cấu trúc lại các dòng chứa label và checkbox */
+        #lifeCard .lf-checkbox-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+        #lifeCard label.lf-chk { display: flex; gap: 8px; align-items: center; cursor: pointer; font-size: 14px; flex: 1; }
+        #lifeCard .control-label { display: flex; justify-content: space-between; align-items: center; }
 
-      <label class="lf-chk"><input type="checkbox" id="lfHead"> Cử động đầu khi robot đang nói</label>
-      <div class="lf-hint">Đầu gật/lắc ngẫu nhiên nhẹ trong lúc robot trả lời. Tắt nếu thấy tiếng servo làm phiền.</div>
+        /* Style cho nút dấu hỏi */
+        #lifeCard .help-btn {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 18px; height: 18px; border-radius: 50%;
+        background: #1e2c4d; color: #8a99ad;
+        font-size: 12px; font-weight: bold;
+        cursor: pointer; border: 1px solid #1e2c4d;
+        transition: all 0.2s; user-select: none; flex-shrink: 0;
+        }
+        #lifeCard .help-btn:hover { background: #00d2ff; color: #000; border-color: #00d2ff; }
+        
+        /* Class ẩn chú thích */
+        #lifeCard .lf-hint-hidden { display: none !important; }
+    </style>
 
-      <label class="lf-chk"><input type="checkbox" id="lfListen"> Gật đầu khi nghe bạn nói</label>
-      <div class="lf-hint">Khi bạn nói liên tục hơn khoảng 1,5 giây, robot gật đầu để thể hiện đang lắng nghe. Nếu robot gật khi không ai nói (micro bắt nhiễu), hãy tắt mục này.</div>
+    <div class="card-title">
+        🌱 Hành vi "có sự sống"
+        <span class="help-btn" onclick="toggleHintById('hint-main')">?</span>
+    </div>
+    <div class="lf-hint lf-hint-hidden" id="hint-main">Robot tự gật/lắc đầu và nhích nhẹ khi trò chuyện để trông sinh động hơn. Chỉnh xong nhớ bấm "Lưu". Giá trị được nhớ cả khi tắt nguồn.</div>
 
-      <label class="lf-chk"><input type="checkbox" id="lfIdle"> Cử động nhỏ khi rảnh</label>
-      <div class="lf-hint">Thỉnh thoảng nghiêng đầu tò mò khi không trò chuyện.</div>
+    <!-- Checkbox 1 -->
+    <div class="lf-checkbox-row">
+        <label class="lf-chk"><input type="checkbox" id="lfHead"> Cử động đầu khi robot đang nói</label>
+        <span class="help-btn" onclick="toggleHintById('hint-head')">?</span>
+    </div>
+    <div class="lf-hint lf-hint-hidden" id="hint-head">Đầu gật/lắc ngẫu nhiên nhẹ trong lúc robot trả lời. Tắt nếu thấy tiếng servo làm phiền.</div>
 
-      <div class="lf-sep"></div>
-      <label class="lf-chk"><input type="checkbox" id="lfWheel"> ⚠️ Cho phép nhích bánh xe khi robot nói</label>
-      <div class="lf-hint lf-warn">Robot sẽ tiến/lùi nhẹ khi đang nói. Chỉ bật sau khi bạn đã bấm "Thử nhích" và đo quãng đường bên dưới. Đặt robot ở giữa bàn, cách mép bàn xa hơn "Giới hạn lệch" ít nhất 20 cm. Lệnh dừng từ web, giọng nói hoặc tay cầm RC luôn được ưu tiên.</div>
+    <!-- Checkbox 2 -->
+    <div class="lf-checkbox-row">
+        <label class="lf-chk"><input type="checkbox" id="lfListen"> Gật đầu khi nghe bạn nói</label>
+        <span class="help-btn" onclick="toggleHintById('hint-listen')">?</span>
+    </div>
+    <div class="lf-hint lf-hint-hidden" id="hint-listen">Khi bạn nói liên tục hơn khoảng 1,5 giây, robot gật đầu để thể hiện đang lắng nghe. Nếu robot gật khi không ai nói (micro bắt nhiễu), hãy tắt mục này.</div>
 
-      <div class="control-label">Tốc độ khi nhích (30–100)</div>
-      <input type="number" id="lfSpeed" min="30" max="100" step="5">
-      <div class="lf-hint">Công suất động cơ mỗi lần nhích. Số lớn thì nhích dứt khoát, số nhỏ thì êm nhưng bánh có thể không quay. Gợi ý bắt đầu 80–90; nếu bánh không nhúc nhích thì tăng lên.</div>
+    <!-- Checkbox 3 -->
+    <div class="lf-checkbox-row">
+        <label class="lf-chk"><input type="checkbox" id="lfIdle"> Cử động nhỏ khi rảnh</label>
+        <span class="help-btn" onclick="toggleHintById('hint-idle')">?</span>
+    </div>
+    <div class="lf-hint lf-hint-hidden" id="hint-idle">Thỉnh thoảng nghiêng đầu tò mò khi không trò chuyện.</div>
 
-      <div class="control-label">Thời gian cấp điện mỗi lần nhích (ms) (40–500)</div>
-      <input type="number" id="lfMs" min="40" max="500" step="10">
-      <div class="lf-hint">Càng lớn thì robot đi càng xa mỗi lần. Nếu bấm "Thử nhích" mà bánh không nhúc nhích thì tăng thêm 20–40 ms rồi thử lại. Robot lớn/nặng cần số lớn hơn robot nhỏ/nhẹ.</div>
+    <div class="lf-sep"></div>
+    
+    <!-- Checkbox 4 (Warning) -->
+    <div class="lf-checkbox-row">
+        <label class="lf-chk"><input type="checkbox" id="lfWheel"> ⚠️ Cho phép nhích bánh xe khi robot nói</label>
+        <span class="help-btn" onclick="toggleHintById('hint-wheel')">?</span>
+    </div>
+    <div class="lf-hint lf-warn lf-hint-hidden" id="hint-wheel">Robot sẽ tiến/lùi nhẹ khi đang nói. Chỉ bật sau khi bạn đã bấm "Thử nhích" và đo quãng đường bên dưới. Đặt robot ở giữa bàn, cách mép bàn xa hơn "Giới hạn lệch" ít nhất 20 cm. Lệnh dừng từ web, giọng nói hoặc tay cầm RC luôn được ưu tiên.</div>
 
-      <div class="control-label">Quãng đường THỰC TẾ mỗi lần nhích (cm) (1–25)</div>
-      <input type="number" id="lfCm" min="1" max="25" step="1">
-      <div class="lf-hint">Cách làm: đặt robot trên bàn, bấm "Thử nhích tiến", dùng thước đo robot vừa đi bao nhiêu cm (đo 3 lần lấy trung bình, làm tròn), rồi nhập vào đây. Robot dùng số này để tính mình đã lệch bao xa so với chỗ đặt. Nhập thấp hơn thực tế sẽ làm giới hạn bên dưới kém an toàn.</div>
+    <!-- Input 1 -->
+    <div class="control-label">
+        <span>Tốc độ khi nhích (30–100)</span>
+        <span class="help-btn" onclick="toggleHintById('hint-speed')">?</span>
+    </div>
+    <input type="number" id="lfSpeed" min="30" max="100" step="5">
+    <div class="lf-hint lf-hint-hidden" id="hint-speed">Công suất động cơ mỗi lần nhích. Số lớn thì nhích dứt khoát, số nhỏ thì êm nhưng bánh có thể không quay. Gợi ý bắt đầu 80–90; nếu bánh không nhúc nhích thì tăng lên.</div>
 
-      <div class="control-label">Giới hạn lệch tối đa so với chỗ đặt (cm) (5–25)</div>
-      <input type="number" id="lfDrift" min="5" max="25" step="1">
-      <div class="lf-hint">Robot không bao giờ đi xa hơn khoảng này so với chỗ bạn đặt. Hãy đặt nhỏ hơn khoảng cách từ robot đến mép bàn ít nhất 10 cm. Số này phải lớn hơn hoặc bằng "quãng đường mỗi lần nhích", nếu không robot sẽ không nhích. Robot lệch dần do bánh trượt hoặc 2 động cơ không đều, nên thỉnh thoảng hãy đặt lại về giữa bàn.</div>
+    <!-- Input 2 -->
+    <div class="control-label">
+        <span>Thời gian cấp điện mỗi lần nhích (ms) (40–500)</span>
+        <span class="help-btn" onclick="toggleHintById('hint-ms')">?</span>
+    </div>
+    <input type="number" id="lfMs" min="40" max="500" step="10">
+    <div class="lf-hint lf-hint-hidden" id="hint-ms">Càng lớn thì robot đi càng xa mỗi lần. Nếu bấm "Thử nhích" mà bánh không nhúc nhích thì tăng thêm 20–40 ms rồi thử lại. Robot lớn/nặng cần số lớn hơn robot nhỏ/nhẹ.</div>
 
-      <div class="control-label">Nghỉ giữa 2 lần nhích (giây): thấp nhất / cao nhất</div>
-      <div class="lf-row">
+    <!-- Input 3 -->
+    <div class="control-label">
+        <span>Quãng đường THỰC TẾ mỗi lần nhích (cm) (1–25)</span>
+        <span class="help-btn" onclick="toggleHintById('hint-cm')">?</span>
+    </div>
+    <input type="number" id="lfCm" min="1" max="25" step="1">
+    <div class="lf-hint lf-hint-hidden" id="hint-cm">Cách làm: đặt robot trên bàn, bấm "Thử nhích tiến", dùng thước đo robot vừa đi bao nhiêu cm (đo 3 lần lấy trung bình, làm tròn), rồi nhập vào đây. Robot dùng số này để tính mình đã lệch bao xa so với chỗ đặt. Nhập thấp hơn thực tế sẽ làm giới hạn bên dưới kém an toàn.</div>
+
+    <!-- Input 4 -->
+    <div class="control-label">
+        <span>Giới hạn lệch tối đa so với chỗ đặt (cm) (5–25)</span>
+        <span class="help-btn" onclick="toggleHintById('hint-drift')">?</span>
+    </div>
+    <input type="number" id="lfDrift" min="5" max="25" step="1">
+    <div class="lf-hint lf-hint-hidden" id="hint-drift">Robot không bao giờ đi xa hơn khoảng này so với chỗ bạn đặt. Hãy đặt nhỏ hơn khoảng cách từ robot đến mép bàn ít nhất 10 cm. Số này phải lớn hơn hoặc bằng "quãng đường mỗi lần nhích", nếu không robot sẽ không nhích. Robot lệch dần do bánh trượt hoặc 2 động cơ không đều, nên thỉnh thoảng hãy đặt lại về giữa bàn.</div>
+
+    <!-- Input 5 -->
+    <div class="control-label">
+        <span>Nghỉ giữa 2 lần nhích (giây): thấp nhất / cao nhất</span>
+        <span class="help-btn" onclick="toggleHintById('hint-gap')">?</span>
+    </div>
+    <div class="lf-row">
         <div><input type="number" id="lfGapMin" min="2" max="120"></div>
         <div><input type="number" id="lfGapMax" min="2" max="300"></div>
-      </div>
-      <div class="lf-hint">Khi robot đang nói, mỗi lần nhích cách nhau ngẫu nhiên trong khoảng này. Muốn nhích ít hơn thì tăng cả hai số.</div>
+    </div>
+    <div class="lf-hint lf-hint-hidden" id="hint-gap">Khi robot đang nói, mỗi lần nhích cách nhau ngẫu nhiên trong khoảng này. Muốn nhích ít hơn thì tăng cả hai số.</div>
 
-      <div class="control-label">Nghỉ giữa 2 cử động khi rảnh (giây): thấp nhất / cao nhất</div>
-      <div class="lf-row">
+    <!-- Input 6 -->
+    <div class="control-label">
+        <span>Nghỉ giữa 2 cử động khi rảnh (giây): thấp nhất / cao nhất</span>
+        <span class="help-btn" onclick="toggleHintById('hint-idle-gap')">?</span>
+    </div>
+    <div class="lf-row">
         <div><input type="number" id="lfIdleMin" min="5" max="600"></div>
         <div><input type="number" id="lfIdleMax" min="5" max="1200"></div>
-      </div>
-      <div class="lf-hint">Chỉ áp dụng khi robot đang rảnh và bật "Cử động nhỏ khi rảnh".</div>
+    </div>
+    <div class="lf-hint lf-hint-hidden" id="hint-idle-gap">Chỉ áp dụng khi robot đang rảnh và bật "Cử động nhỏ khi rảnh".</div>
 
-      <div class="btn-grid" style="margin-bottom: 8px;">
+    <!-- Nút thử nghiệm -->
+    <div class="control-label" style="margin-top: 10px;">
+        <span>Thử nghiệm</span>
+        <span class="help-btn" onclick="toggleHintById('hint-test')">?</span>
+    </div>
+    <div class="btn-grid" style="margin-bottom: 8px;">
         <button class="btn-action" onclick="testNudge('forward')">⬆️ Thử nhích tiến</button>
         <button class="btn-action" onclick="testNudge('backward')">⬇️ Thử nhích lùi</button>
+    </div>
+    <div class="lf-hint lf-hint-hidden" id="hint-test">Nút "Thử" dùng đúng các giá trị đang nhập ở trên (tự lưu luôn) và hoạt động cả khi chưa tick bật nhích bánh xe.</div>
+
+    <button class="btn-action" style="width: 100%; background: var(--ok); color: #000; font-weight: bold;" onclick="saveLife()">💾 Lưu hành vi</button>
+    </div>
+
+        <!-- Card: Chat & Lệnh -->
+    <div class="card" id="chatCard">
+      <div class="card-title">💬 Chat & Lệnh</div>
+      <div id="chatMessages">
+        <div class="chat-msg-sys">Nhập lệnh: "đi thẳng 2 giây", "dừng", "gật đầu", "phát nhạc", "dừng nhạc"...</div>
       </div>
-      <div class="lf-hint">Nút "Thử" dùng đúng các giá trị đang nhập ở trên (tự lưu luôn) và hoạt động cả khi chưa tick bật nhích bánh xe.</div>
-      <button class="btn-action" style="width: 100%; background: var(--ok); color: #000; font-weight: bold;" onclick="saveLife()">💾 Lưu hành vi</button>
+      <div id="chatInputRow">
+        <input type="text" id="chatInput" placeholder="Nhập lệnh (vd: phát nhạc, đi thẳng 2 giây)" />
+        <button id="btnChatSend">Gửi</button>
+      </div>
     </div>
   </div>
 
@@ -491,6 +561,12 @@ constexpr const char* kWebUiHtml = R"HTML(
     function log(msg) {
       appendLogLine('SYS', msg, 'log-sys');
     }
+    function toggleHintById(id) {
+        const el = document.getElementById(id);
+        if (el) {
+            el.classList.toggle('lf-hint-hidden');
+        }
+    } 
 
     // ===== Chat box =====
     function addChatMsg(who, text) {
