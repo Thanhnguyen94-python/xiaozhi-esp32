@@ -159,6 +159,7 @@ private:
     bool sd_music_stop_requested_ = false;
     uint32_t sd_music_generation_ = 0;
     std::atomic<bool> sd_music_active_{false};
+    std::atomic<int> sd_music_tasks_running_{0};
     bool sd_music_autoplay_next_ = false;
     bool sd_music_shuffle_mode_ = false;
 

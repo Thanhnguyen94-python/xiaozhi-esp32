@@ -1591,9 +1591,15 @@ bool Application::StartSdMusicPlaybackLocked(const std::string& path) {
     sd_music_stop_requested_ = true;
     audio_service_.RequestPlaybackStop();
 
-    if (sd_music_task_handle_ != nullptr) {
-        // Existing task is stopping; continue and start a new one anyway.
-        // Decoder stop flag ensures old task exits soon.
+    {
+        int waited_ms = 0;
+        while (sd_music_tasks_running_.load() > 0 && waited_ms < 1500) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            waited_ms += 20;
+        }
+        if (sd_music_tasks_running_.load() > 0) {
+            ESP_LOGW(TAG, "Task nhac cu chua thoat sau %d ms, van phat bai moi", waited_ms);
+        }
     }
 
     sd_music_stop_requested_ = false;
@@ -1611,6 +1617,7 @@ bool Application::StartSdMusicPlaybackLocked(const std::string& path) {
         ESP_LOGE(TAG, "No memory for SD music task arg");
         return false;
     }
+    sd_music_tasks_running_.fetch_add(1);
 
     BaseType_t ok = xTaskCreate([](void* arg) {
         std::unique_ptr<SdMusicTaskArg> task_arg_ptr(static_cast<SdMusicTaskArg*>(arg));
@@ -1683,6 +1690,7 @@ bool Application::StartSdMusicPlaybackLocked(const std::string& path) {
 
     if (ok != pdPASS) {
         delete task_arg;
+        sd_music_tasks_running_.fetch_sub(1);
         sd_music_task_handle_ = nullptr;
         sd_music_active_.store(false);
         ESP_LOGE(TAG, "Failed to create SD music task");
@@ -1703,6 +1711,9 @@ bool Application::StopSdCardMusic() {
         sd_music_autoplay_next_ = false;
         sd_music_active_.store(false);
         audio_service_.RequestPlaybackStop();
+    }
+    for (int waited_ms = 0; sd_music_tasks_running_.load() > 0 && waited_ms < 1000; waited_ms += 20) {
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
 
     auto codec = Board::GetInstance().GetAudioCodec();

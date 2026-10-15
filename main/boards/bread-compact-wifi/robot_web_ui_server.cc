@@ -2032,9 +2032,21 @@ void RobotWebUiServer::HandleChat(int fd, const char* json_text, size_t len) {
     std::string tool;
     std::string reply;
     bool handled = false;
+    // ====== STOP NHAC (phai dat TRUOC nhanh STOP chung, vi "dung nhac" cung chua chu "dung") ======
+    if (Contains(lower, "dung nhac") || Contains(lower, "dừng nhạc") ||
+        Contains(lower, "ngung nhac") || Contains(lower, "ngừng nhạc") ||
+        Contains(lower, "stop nhac") || Contains(lower, "tắt nhạc") ||
+        Contains(lower, "tat nhac")) {
+        auto& app = Application::GetInstance();
+        bool ok = app.StopSdCardMusic();
+        ESP_LOGI(TAG, "stop music (chat) StopSdCardMusic=%d", ok);
+        tool = "self.webui.music";
+        reply = ok ? "Đã dừng nhạc" : "Không dừng được";
+        handled = true;
+    }
 
     // ====== STOP (ưu tiên cao) ======
-    if (Contains(lower, "dung") || Contains(lower, "dừng") || Contains(lower, "stop") ||
+    else if (Contains(lower, "dung") || Contains(lower, "dừng") || Contains(lower, "stop") ||
         Contains(lower, "đứng")) {
         if (wheel_motor_) {
             wheel_motor_->Stop();
