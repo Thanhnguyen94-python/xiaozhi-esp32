@@ -13,6 +13,8 @@
 #include <vector>
 #include <cJSON.h>
 
+class RobotLifeBehavior;
+
 class RobotWebUiServer {
 public:
     RobotWebUiServer(DualDcMotorController* wheel_motor, DualServoController* head_servo);
@@ -23,6 +25,7 @@ public:
     void BroadcastJson(const char* json);
     void BroadcastJson(const std::string& json) { BroadcastJson(json.c_str()); }
     size_t GetWsClientCount();
+    void SetLifeBehavior(RobotLifeBehavior* life) { life_behavior_ = life; }
 
 private:
     struct MotionConfig {
@@ -38,6 +41,7 @@ private:
     MotionConfig config_;
     std::mutex config_mutex_;
     esp_timer_handle_t motion_stop_timer_ = nullptr;
+    RobotLifeBehavior* life_behavior_ = nullptr;
 
     void LoadConfig();
     void SaveConfig();

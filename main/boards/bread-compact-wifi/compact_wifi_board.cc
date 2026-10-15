@@ -373,6 +373,9 @@ private:
 
         if (life_behavior_ == nullptr) {
             life_behavior_ = new RobotLifeBehavior(wheel_motor_, head_servo_);
+            if (web_ui_server_ != nullptr) {
+                web_ui_server_->SetLifeBehavior(life_behavior_);
+            }
         }
     }
 

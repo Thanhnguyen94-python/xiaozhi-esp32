@@ -171,6 +171,7 @@ private:
         int frame_index = 0;
         bool collecting = false;
         bool last_override = false;
+        bool lost_stopped = false;
 
         while (true) {
             int n = uart_read_bytes(RC_SBUS_UART_PORT, bytes, sizeof(bytes), pdMS_TO_TICKS(20));
@@ -210,13 +211,19 @@ private:
 
                 bool valid = !frame_lost && !failsafe;
                 bool override_active = valid && (std::abs(throttle) > 0 || std::abs(steering) > 0);
+                if (valid) {
+                    lost_stopped = false;
+                }
 
                 if (!valid) {
                     throttle = 0;
                     steering = 0;
                     left = 0;
                     right = 0;
-                    StopMotors();
+                    if (!lost_stopped) {
+                        StopMotors();
+                        lost_stopped = true;
+                    }
                 } else if (override_active) {
                     int left100 = Speed255To100(left);
                     int right100 = Speed255To100(right);
@@ -263,7 +270,10 @@ private:
             }
 
             if (timeout) {
-                StopMotors();
+                if (!lost_stopped) {
+                    StopMotors();
+                    lost_stopped = true;
+                }
                 last_override = false;
             }
         }
