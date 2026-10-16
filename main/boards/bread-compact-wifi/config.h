@@ -32,8 +32,7 @@
 #define BUILTIN_LED_GPIO        GPIO_NUM_48
 #define BOOT_BUTTON_GPIO        GPIO_NUM_0
 #define TOUCH_BUTTON_GPIO       GPIO_NUM_47
-#define VOLUME_UP_BUTTON_GPIO   GPIO_NUM_40
-#define VOLUME_DOWN_BUTTON_GPIO GPIO_NUM_39
+// GPIO40/39 (nut VOL+/VOL-) da thu hoi: am luong chinh tren WebUI.
 
 #define DISPLAY_SDA_PIN GPIO_NUM_41
 #define DISPLAY_SCL_PIN GPIO_NUM_42
@@ -80,8 +79,12 @@
 #define SDCARD_MOUNT_POINT "/sdcard"
 
 
-// A MCP Test: Control a lamp
-#define LAMP_GPIO GPIO_NUM_18
+// GPIO18 (den lamp test MCP) da thu hoi.
+
+// GPIO trong co the dung cho cam bien (LM393/VL6180X XSHUT/INT...):
+//   An toan : 3, 18, 20, 39, 40
+//   Tranh   : 45, 46 (strapping, module keo len HIGH se loi boot/nap)
+//   Khong co: 26-32 (flash), 33-37 (PSRAM octal), 43/44 (UART0 log/nap)
 
 // Wheel motors (2 DC motors via H-bridge)
 // Mapping for common drivers (L298N/TB6612-like):
@@ -144,22 +147,13 @@ GND → GND
 5) Nút bấm / LED
 BOOT_BUTTON → GPIO0 (thường là nút BOOT onboard)
 TOUCH_BUTTON → GPIO47
-VOL+ → GPIO40
-VOL- → GPIO39
 BUILTIN_LED → GPIO48
 Cách đấu nút rời phổ biến:
 
 Một chân nút → GPIO
 Chân còn lại → GND
 Dùng pull-up nội (nếu code đã bật), nhấn = mức 0.
-6) Đèn lamp
-LAMP_GPIO → GPIO18
-Nếu là LED nhỏ:
-
-GPIO18 → điện trở 220–1kΩ → LED → GND.
-Nếu là tải lớn (đèn/relay):
-
-Dùng transistor/MOSFET/relay driver, không kéo trực tiếp từ GPIO.
+6) GPIO18/39/40: da thu hoi (bo den lamp va nut volume), de trong cho cam bien.
 7) Motor bánh xe (H-bridge)
 Theo config:
 

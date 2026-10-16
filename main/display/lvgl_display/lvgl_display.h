@@ -24,6 +24,7 @@ public:
     virtual void UpdateStatusBar(bool update_all = false);
     virtual void SetPowerSaveMode(bool on);
     virtual bool SnapshotToJpeg(std::string& jpeg_data, int quality = 80);
+    lv_display_t* GetLvDisplay() const { return display_; }
 
 protected:
     esp_pm_lock_handle_t pm_lock_ = nullptr;
