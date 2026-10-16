@@ -4,6 +4,7 @@
 #include "mcp_server.h"
 
 #include <algorithm>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -38,6 +39,10 @@ private:
 
     std::vector<std::string> tool_prefixes_;
     std::mutex mutex_;
+
+    // Bo loc an toan tuy chon (vd cam bien va cham): duoc goi truoc khi ap toc do,
+    // co the giam/chan (left, right). Ap dung cho moi nguon lenh di qua SetSpeed().
+    std::function<void(int& left, int& right)> speed_filter_;
 
     static int ClampSpeed(int speed) {
         return std::clamp(speed, -100, 100);
@@ -234,9 +239,20 @@ public:
 
     void SetSpeed(int left, int right) {
         std::lock_guard<std::mutex> lock(mutex_);
+        left = ClampSpeed(left);
+        right = ClampSpeed(right);
+        if (speed_filter_) {
+            speed_filter_(left, right);
+        }
         left_speed_ = ClampSpeed(left);
         right_speed_ = ClampSpeed(right);
         ApplyMotorStateLocked();
+    }
+
+    // Goi 1 lan khi khoi tao (truoc khi co lenh di chuyen). Filter phai nhanh, khong block.
+    void SetSpeedFilter(std::function<void(int& left, int& right)> filter) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        speed_filter_ = std::move(filter);
     }
 
     void Forward(int speed) {

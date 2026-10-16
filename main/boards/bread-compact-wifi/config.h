@@ -154,6 +154,10 @@ Một chân nút → GPIO
 Chân còn lại → GND
 Dùng pull-up nội (nếu code đã bật), nhấn = mức 0.
 6) GPIO18/39/40: da thu hoi (bo den lamp va nut volume), de trong cho cam bien.
+6b) Cam bien an toan (bat/tat va chon chan tren WebUI, tab "Cam bien"):
+LM393 / cong tac va cham: OUT -> GPIO (mac dinh truoc=GPIO3, sau=GPIO18), VCC -> 3V3, GND -> GND.
+  Chan cho phep: 3, 18, 20, 39, 40. Khong cap 5V cho module (ngo ra se len 5V).
+VL6180X (TOF050C): SDA -> GPIO41, SCL -> GPIO42 (chung bus OLED chinh, dia chi 0x29), VCC -> 3V3, GND -> GND.
 7) Motor bánh xe (H-bridge)
 Theo config:
 

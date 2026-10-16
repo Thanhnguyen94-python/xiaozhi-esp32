@@ -7,6 +7,7 @@
 #include "board.h"
 #include "settings.h"
 #include "robot_life_behavior.h"
+#include "robot_sensor_hub.h"
 
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -175,6 +176,12 @@ constexpr const char* kWebUiHtml = R"HTML(
 
     /* Switch */
     .sw-row { display:flex; align-items:center; gap:10px; padding:6px 0; }
+    .sns-live { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:14px; }
+    .sns-chip { border:1px solid var(--border); border-radius:10px; padding:8px 10px; background:var(--surface-2); }
+    .sns-chip span { display:block; font-size:11px; color:var(--text-dim); }
+    .sns-chip b { font-size:15px; }
+    .sns-chip.on { border-color:var(--danger); } .sns-chip.on b { color:var(--danger); }
+    .sns-chip.ok b { color:var(--ok); } .sns-chip.off b { color:var(--text-faint); }
     .sw { flex:1; display:flex; align-items:center; gap:10px; cursor:pointer; font-size:14px; }
     .sw input { appearance:none; -webkit-appearance:none; width:38px; height:22px; border-radius:99px; flex-shrink:0;
       background:var(--surface-3); border:1px solid var(--border-strong); position:relative; cursor:pointer; transition:background-color .15s; }
@@ -310,6 +317,7 @@ constexpr const char* kWebUiHtml = R"HTML(
       <button class="tab" role="tab" data-tab="control">🎮 Điều khiển</button>
       <button class="tab" role="tab" data-tab="chat">💬 Chat & Nhạc</button>
       <button class="tab" role="tab" data-tab="life">🌱 Hành vi</button>
+      <button class="tab" role="tab" data-tab="sensor">🛡️ Cảm biến</button>
       <button class="tab" role="tab" data-tab="settings">⚙️ Cài đặt <i class="count hidden" id="setBadge">!</i></button>
       <button class="tab" role="tab" data-tab="log">📜 Nhật ký <i class="count hidden" id="logBadge">0</i></button>
     </nav>
@@ -531,6 +539,74 @@ constexpr const char* kWebUiHtml = R"HTML(
         <div class="err-box hidden" id="lifeErr"></div>
         <button class="btn success block" id="btnSaveLife">💾 Lưu hành vi</button>
       </div>
+  </section>
+
+  <!-- ================= TAB: CẢM BIẾN ================= -->
+  <section class="panel" data-panel="sensor">
+    <div class="card hidden" id="snsUnsupported">
+      <div class="card-h"><h2>🛡️ Cảm biến an toàn</h2></div>
+      <p class="muted" style="line-height:1.5">Firmware đang chạy chưa hỗ trợ cảm biến (<code>/api/settings</code> không có các trường <code>sns_…</code>). Hãy nạp firmware mới hơn rồi tải lại trang.</p>
+    </div>
+    <div class="card" id="snsCard">
+      <div class="card-h">
+        <h2>🛡️ Cảm biến an toàn</h2>
+        <button class="help" data-hint="hint-sns-main" aria-expanded="false">?</button>
+      </div>
+      <div class="hint hidden" id="hint-sns-main">Khi cảm biến phát hiện vật cản hoặc mép bàn, robot dừng bánh và không nhận lệnh đi tiếp về hướng đó (từ web, giọng nói, macro, "có sự sống" và cả tay cầm RC). Đi theo hướng ngược lại hoặc quay tại chỗ vẫn được. Đổi chân và lưu là áp dụng ngay, không cần khởi động lại.</div>
+
+      <div class="sec-title">Trạng thái trực tiếp</div>
+      <div class="sns-live">
+        <div class="sns-chip off" id="snsLiveFront"><span>Phía trước</span><b>—</b></div>
+        <div class="sns-chip off" id="snsLiveBack"><span>Phía sau</span><b>—</b></div>
+        <div class="sns-chip off" id="snsLiveTof"><span>Khoảng cách ToF</span><b>—</b></div>
+      </div>
+
+      <div class="grid" style="gap:18px">
+        <div>
+          <div class="sec-title">Cảm biến va chạm / vật cản (LM393, công tắc)</div>
+          <div class="sw-row"><label class="sw"><input type="checkbox" id="snsFrontEn"> Cảm biến phía trước</label><button class="help" data-hint="hint-sns-bump">?</button></div>
+          <div class="two">
+            <div><span class="muted">Chân GPIO</span><select class="input" id="snsFrontGpio"></select></div>
+            <div><span class="muted">Mức báo</span><select class="input" id="snsFrontLow"><option value="1">LOW = có vật (LM393)</option><option value="0">HIGH = có vật</option></select></div>
+          </div>
+          <div class="sw-row" style="margin-top:8px"><label class="sw"><input type="checkbox" id="snsBackEn"> Cảm biến phía sau</label></div>
+          <div class="two">
+            <div><span class="muted">Chân GPIO</span><select class="input" id="snsBackGpio"></select></div>
+            <div><span class="muted">Mức báo</span><select class="input" id="snsBackLow"><option value="1">LOW = có vật (LM393)</option><option value="0">HIGH = có vật</option></select></div>
+          </div>
+          <div class="hint hidden" id="hint-sns-bump" style="margin-top:8px">Nối OUT của module vào chân GPIO đã chọn, VCC vào <b>3.3V</b> (không dùng 5V), GND chung. Module LM393 thường báo LOW khi có vật; nếu ô "Trạng thái trực tiếp" báo ngược thì đổi "Mức báo". Công tắc hành trình: một chân vào GPIO, chân kia xuống GND, chọn LOW. Chỉ nên dùng các chân trong danh sách (đã kiểm tra là trống trên board).</div>
+        </div>
+
+        <div>
+          <div class="sec-title">Cảm biến khoảng cách ToF (VL6180X / TOF050C)</div>
+          <div class="sw-row"><label class="sw"><input type="checkbox" id="snsTofEn"> Bật cảm biến ToF</label><button class="help" data-hint="hint-sns-tof">?</button></div>
+          <div class="two">
+            <div><span class="muted">Cách gắn</span><select class="input" id="snsTofMode"><option value="0">Nhìn thẳng: chặn vật cản</option><option value="1">Chúc xuống: chống rơi mép bàn</option></select></div>
+            <div><span class="muted">Ngưỡng (mm, 10–200)</span><input type="number" class="input" id="snsTofMm" min="10" max="200" inputmode="numeric"></div>
+          </div>
+          <div class="hint hidden" id="hint-sns-tof" style="margin-top:8px">Nối SDA→GPIO41, SCL→GPIO42 (chung với OLED chính), VCC 3.3V, GND. Tầm đo thực tế khoảng 10–20 cm.<br>• <b>Nhìn thẳng</b>: dừng khi vật gần hơn ngưỡng.<br>• <b>Chúc xuống</b>: gắn ở mũi robot, nhìn xuống mặt bàn; xem số đo trực tiếp khi đặt trên bàn (vd 30 mm) rồi đặt ngưỡng lớn hơn khoảng 20–30 mm. Khi mũi robot ra khỏi mép bàn, số đo vọt lên hoặc mất → robot dừng.<br>Nếu bật mà không đọc được cảm biến, robot sẽ chặn đi tiến cho an toàn.</div>
+        </div>
+
+        <div>
+          <div class="sec-title">Phản ứng</div>
+          <div class="two">
+            <div><span class="muted">Khi phát hiện lúc đang chạy</span><select class="input" id="snsAction"><option value="1">Dừng + lùi nhẹ</option><option value="0">Chỉ dừng</option></select></div>
+            <div><span class="muted">Lùi trong (ms, 100–1000)</span><input type="number" class="input" id="snsBackoffMs" min="100" max="1000" step="50" inputmode="numeric"></div>
+          </div>
+          <div class="two" style="margin-top:8px">
+            <div><span class="muted">Tốc độ lùi (30–100)</span><input type="number" class="input" id="snsBackoffSpeed" min="30" max="100" step="5" inputmode="numeric"></div>
+            <div></div>
+          </div>
+          <div class="sw-row" style="margin-top:8px"><label class="sw"><input type="checkbox" id="snsFace"> Đổi mặt "giật mình" khi va chạm</label></div>
+          <div class="sw-row"><label class="sw"><input type="checkbox" id="snsRcBypass"> ⚠️ Cho tay cầm RC vượt qua cảm biến</label><button class="help" data-hint="hint-sns-rc">?</button></div>
+          <div class="hint warn hidden" id="hint-sns-rc">Khi bật, lúc bạn đang lái bằng tay cầm RC robot sẽ không bị cảm biến chặn (bạn tự chịu trách nhiệm quan sát). Các nguồn lệnh khác vẫn bị chặn.</div>
+        </div>
+      </div>
+
+      <div class="sep"></div>
+      <div class="err-box hidden" id="snsErr"></div>
+      <button class="btn success block" id="btnSaveSns">💾 Lưu cảm biến</button>
+    </div>
   </section>
 
   <!-- ================= TAB: CÀI ĐẶT ================= -->
@@ -803,6 +879,7 @@ constexpr const char* kWebUiHtml = R"HTML(
       renderWheel(!!st.wheel_ready, st.left_speed || 0, st.right_speed || 0);
       $('stSpeed').textContent = `${st.left_speed}/${st.right_speed}`;
       $('stVol').textContent = `${st.volume}%`;
+      renderSensors(st);
     }
   }
 
@@ -894,6 +971,79 @@ constexpr const char* kWebUiHtml = R"HTML(
     await apiPost('/api/settings', { ...lifePayload(), life_test: dir });
   }
 
+  // ===== Cảm biến an toàn =====
+  const SNS_NUM = { sns_tof_mm: 'snsTofMm', sns_backoff_ms: 'snsBackoffMs', sns_backoff_speed: 'snsBackoffSpeed' };
+  const SNS_SEL = { sns_front_gpio: 'snsFrontGpio', sns_front_low: 'snsFrontLow', sns_back_gpio: 'snsBackGpio',
+                    sns_back_low: 'snsBackLow', sns_tof_mode: 'snsTofMode', sns_action: 'snsAction' };
+  const SNS_CHK = { sns_front_en: 'snsFrontEn', sns_back_en: 'snsBackEn', sns_tof_en: 'snsTofEn',
+                    sns_rc_bypass: 'snsRcBypass', sns_react_face: 'snsFace' };
+  const SNS_LABEL = { snsTofMm: 'Ngưỡng ToF', snsBackoffMs: 'Thời gian lùi', snsBackoffSpeed: 'Tốc độ lùi' };
+
+  function loadSensors(s) {
+    const ok = !!s && s.sns_tof_mm !== undefined;
+    $('snsCard').classList.toggle('hidden', !ok);
+    $('snsUnsupported').classList.toggle('hidden', ok);
+    if (!ok) return;
+    const pins = Array.isArray(s.sns_gpio_choices) ? s.sns_gpio_choices : [];
+    for (const id of ['snsFrontGpio', 'snsBackGpio']) {
+      $(id).innerHTML = pins.map(g => `<option value="${g}">GPIO${g}</option>`).join('');
+    }
+    for (const k in SNS_NUM) $(SNS_NUM[k]).value = s[k];
+    for (const k in SNS_SEL) $(SNS_SEL[k]).value = String(s[k]);
+    for (const k in SNS_CHK) $(SNS_CHK[k]).checked = !!s[k];
+  }
+  function sensorPayload() {
+    const p = {};
+    for (const k in SNS_NUM) p[k] = Number($(SNS_NUM[k]).value);
+    for (const k in SNS_SEL) p[k] = Number($(SNS_SEL[k]).value);
+    for (const k in SNS_CHK) p[k] = $(SNS_CHK[k]).checked ? 1 : 0;
+    return p;
+  }
+  function validateSensors() {
+    const errs = [];
+    for (const k in SNS_NUM) {
+      const el = $(SNS_NUM[k]);
+      const v = Number(el.value), mn = Number(el.min), mx = Number(el.max);
+      const bad = el.value === '' || !isFinite(v) || v < mn || v > mx;
+      el.classList.toggle('bad', bad);
+      if (bad) errs.push(`${SNS_LABEL[el.id]} phải từ ${mn} đến ${mx}`);
+    }
+    if ($('snsFrontEn').checked && $('snsBackEn').checked && $('snsFrontGpio').value === $('snsBackGpio').value) {
+      errs.push('Cảm biến trước và sau đang dùng chung một chân GPIO');
+    }
+    const box = $('snsErr');
+    box.innerHTML = errs.map(e => '• ' + escapeHtml(e)).join('<br>');
+    box.classList.toggle('hidden', errs.length === 0);
+    if (errs.length) toast('Có ' + errs.length + ' giá trị chưa hợp lệ', 'err');
+    return errs.length === 0;
+  }
+  async function saveSensors() {
+    if (!validateSensors()) return;
+    await apiPost('/api/settings', sensorPayload(), { toast: 'Đã lưu cảm biến' });
+    setTimeout(refreshStatus, 300);
+  }
+  function setChip(id, cls, text) {
+    const el = $(id);
+    el.classList.remove('on', 'ok', 'off');
+    el.classList.add(cls);
+    el.querySelector('b').textContent = text;
+  }
+  function renderSensors(m) {
+    if (typeof m.sns_front !== 'number') return;
+    const tofEn = $('snsTofEn').checked;
+    const side = (on, blocked, hit) => {
+      if (!on) return ['off', 'Tắt'];
+      return blocked ? ['on', hit ? '⛔ Va chạm' : '⛔ Bị chặn'] : ['ok', '✅ Thông'];
+    };
+    const f = side($('snsFrontEn').checked || tofEn, !!m.sns_front, !!m.sns_front_hit);
+    setChip('snsLiveFront', f[0], f[1]);
+    const b = side($('snsBackEn').checked, !!m.sns_back, !!m.sns_back_hit);
+    setChip('snsLiveBack', b[0], b[1]);
+    if (!tofEn) setChip('snsLiveTof', 'off', 'Tắt');
+    else if (!m.sns_tof_ok) setChip('snsLiveTof', 'on', 'Không thấy');
+    else setChip('snsLiveTof', 'ok', m.sns_tof_mm_now < 0 ? 'Xa / trống' : `${m.sns_tof_mm_now} mm`);
+  }
+
   function confirmReboot() {
     if (confirm('Khởi động lại robot? Robot sẽ tạm thời mất kết nối trong vài giây.')) sendCtrl('robot_reboot');
   }
@@ -962,6 +1112,7 @@ constexpr const char* kWebUiHtml = R"HTML(
         setRange('stepMs', 'vStep', s.step_ms);
         setRange('volume', 'vVol', s.volume);
         loadLife(s);
+        loadSensors(s);
         loadAuth(s);
       }
     } catch (e) { log('INIT SETTINGS ERROR: ' + e.message); }
@@ -1006,6 +1157,7 @@ constexpr const char* kWebUiHtml = R"HTML(
             if (!joystick || !joystick.active) { $('joyL').textContent = msg.left_speed; $('joyR').textContent = msg.right_speed; }
           }
           if (typeof msg.volume === 'number') $('stVol').textContent = `${msg.volume}%`;
+          renderSensors(msg);
         } else if (msg.type === 'motor') {
           $('joyL').textContent = msg.left;
           $('joyR').textContent = msg.right;
@@ -1321,6 +1473,8 @@ constexpr const char* kWebUiHtml = R"HTML(
     }));
     $('btnSaveSettings').addEventListener('click', saveSettings);
     $('btnSaveLife').addEventListener('click', saveLife);
+    $('btnSaveSns').addEventListener('click', saveSensors);
+    document.querySelectorAll('#snsCard input[type=number]').forEach(i => i.addEventListener('input', () => i.classList.remove('bad')));
     document.querySelectorAll('#lifeCard input[type=number]').forEach(i => i.addEventListener('input', () => i.classList.remove('bad')));
 
     // Mật khẩu
@@ -1616,6 +1770,9 @@ void RobotWebUiServer::BuildStatusJson(std::string& out, bool include_type) {
     int left_speed  = current_left_speed_;
     int right_speed = current_right_speed_;
     bool wheel_ready = (wheel_motor_ != nullptr) && wheel_motor_->IsReady();
+    if (wheel_ready) {
+        wheel_motor_->GetSpeed(left_speed, right_speed);  // toc do thuc (sau bo loc cam bien)
+    }
 
     int move_speed, turn_speed, step_ms;
     {
@@ -1643,6 +1800,9 @@ void RobotWebUiServer::BuildStatusJson(std::string& out, bool include_type) {
     cJSON_AddNumberToObject(root, "turn_speed",   turn_speed);
     cJSON_AddNumberToObject(root, "step_ms",      step_ms);
     cJSON_AddNumberToObject(root, "volume",       volume);
+    if (sensor_hub_ != nullptr) {
+        sensor_hub_->AppendStatusToJson(root);
+    }
 
     char* json_text = cJSON_PrintUnformatted(root);
     out = json_text ? json_text : "{}";
@@ -1683,6 +1843,9 @@ esp_err_t RobotWebUiServer::HandleSettingsGet(httpd_req_t* req) {
     cJSON_AddNumberToObject(root, "volume", volume);
     if (life_behavior_ != nullptr) {
         life_behavior_->AppendConfigToJson(root);
+    }
+    if (sensor_hub_ != nullptr) {
+        sensor_hub_->AppendConfigToJson(root);
     }
     cJSON_AddNumberToObject(root, "auth_default", webauth::IsDefaultPassword() ? 1 : 0);
 
@@ -1741,6 +1904,9 @@ esp_err_t RobotWebUiServer::HandleSettingsPost(httpd_req_t* req) {
     }
     if (life_behavior_ != nullptr) {
         life_behavior_->ApplyConfigFromJson(root);
+    }
+    if (sensor_hub_ != nullptr) {
+        sensor_hub_->ApplyConfigFromJson(root);
     }
     auto* new_pw = cJSON_GetObjectItem(root, "new_password");
     if (cJSON_IsString(new_pw) && new_pw->valuestring != nullptr) {
@@ -2238,6 +2404,10 @@ void RobotWebUiServer::StatusBroadcastLoop() {
         int left  = current_left_speed_;
         int right = current_right_speed_;
         bool ready = (wheel_motor_ != nullptr) && wheel_motor_->IsReady();
+        if (ready) {
+            wheel_motor_->GetSpeed(left, right);
+        }
+        uint32_t sensor_stamp = (sensor_hub_ != nullptr) ? sensor_hub_->StatusStamp() : 0;
 
         int vol = 0;
         auto codec = Board::GetInstance().GetAudioCodec();
@@ -2249,9 +2419,11 @@ void RobotWebUiServer::StatusBroadcastLoop() {
         if (left  == last_left_speed_  &&
             right == last_right_speed_ &&
             vol   == last_volume_      &&
-            ready == last_wheel_ready_) {
+            ready == last_wheel_ready_ &&
+            sensor_stamp == last_sensor_stamp_) {
             continue;
         }
+        last_sensor_stamp_ = sensor_stamp;
 
         last_left_speed_  = left;
         last_right_speed_ = right;

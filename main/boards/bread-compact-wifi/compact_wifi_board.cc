@@ -14,6 +14,7 @@
 #include "robot_control_hub.h"
 #include "robot_life_behavior.h"
 #include "hotplug_oled_panel.h"
+#include "robot_sensor_hub.h"
 #include "led/single_led.h"
 #include "assets/lang_config.h"
 
@@ -57,6 +58,7 @@ private:
     RobotWebUiServer* web_ui_server_ = nullptr;
     RobotControlHub* control_hub_ = nullptr;
     RobotLifeBehavior* life_behavior_ = nullptr;
+    RobotSensorHub* sensor_hub_ = nullptr;
 
     void InitializeDisplayI2c() {
         i2c_master_bus_config_t bus_config = {
@@ -373,8 +375,15 @@ private:
                 true);
         }
 
+        // Cam bien an toan: VL6180X dung chung bus I2C voi OLED chinh (41/42).
+        if (sensor_hub_ == nullptr) {
+            sensor_hub_ = new RobotSensorHub(wheel_motor_, display_i2c_bus_);
+            sensor_hub_->Start();
+        }
+
         if (web_ui_server_ == nullptr) {
             web_ui_server_ = new RobotWebUiServer(wheel_motor_, head_servo_);
+            web_ui_server_->SetSensorHub(sensor_hub_);
         }
 
         if (control_hub_ == nullptr) {
@@ -388,6 +397,7 @@ private:
 
         if (life_behavior_ == nullptr) {
             life_behavior_ = new RobotLifeBehavior(wheel_motor_, head_servo_);
+            life_behavior_->SetSensorHub(sensor_hub_);
             if (web_ui_server_ != nullptr) {
                 web_ui_server_->SetLifeBehavior(life_behavior_);
             }
@@ -427,6 +437,9 @@ public:
         virtual ~CompactWifiBoard() {
         delete life_behavior_;
         life_behavior_ = nullptr;
+
+        delete sensor_hub_;
+        sensor_hub_ = nullptr;
 
         delete control_hub_;
         control_hub_ = nullptr;

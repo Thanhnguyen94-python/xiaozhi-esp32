@@ -10,6 +10,7 @@
 #include "dual_dc_motor_controller.h"
 #include "dual_servo_controller.h"
 #include "rc_sbus_controller.h"
+#include "robot_sensor_hub.h"
 #include "settings.h"
 
 #include <algorithm>
@@ -74,6 +75,9 @@ public:
         }
         ESP_LOGI(TAG, "RobotLifeBehavior started");
     }
+
+    // Cam bien an toan (tuy chon): khong nhich ve phia dang bi chan / mep ban.
+    void SetSensorHub(RobotSensorHub* sensors) { sensors_ = sensors; }
 
     // Tam dung/tiep tuc (vi du khi macro dang phat). Mac dinh bat.
     void SetEnabled(bool enabled) { enabled_.store(enabled); }
@@ -165,6 +169,7 @@ private:
 
     DualDcMotorController* wheel_motor_ = nullptr;
     DualServoController* head_servo_ = nullptr;
+    RobotSensorHub* sensors_ = nullptr;
     TaskHandle_t task_ = nullptr;
     std::atomic<bool> enabled_{true};
 
@@ -296,6 +301,10 @@ private:
         float limit = static_cast<float>(c.max_drift_cm);
         bool can_fwd = (drift + leg) <= limit;
         bool can_back = (drift - leg) >= -limit;
+        if (sensors_ != nullptr) {
+            can_fwd = can_fwd && !sensors_->FrontBlocked();
+            can_back = can_back && !sensors_->BackBlocked();
+        }
         if (!can_fwd && !can_back) {
             return;
         }

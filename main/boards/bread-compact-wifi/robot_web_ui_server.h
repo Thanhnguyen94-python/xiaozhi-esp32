@@ -14,6 +14,7 @@
 #include <cJSON.h>
 
 class RobotLifeBehavior;
+class RobotSensorHub;
 
 class RobotWebUiServer {
 public:
@@ -26,6 +27,7 @@ public:
     void BroadcastJson(const std::string& json) { BroadcastJson(json.c_str()); }
     size_t GetWsClientCount();
     void SetLifeBehavior(RobotLifeBehavior* life) { life_behavior_ = life; }
+    void SetSensorHub(RobotSensorHub* sensors) { sensor_hub_ = sensors; }
 
 private:
     struct MotionConfig {
@@ -42,6 +44,7 @@ private:
     std::mutex config_mutex_;
     esp_timer_handle_t motion_stop_timer_ = nullptr;
     RobotLifeBehavior* life_behavior_ = nullptr;
+    RobotSensorHub* sensor_hub_ = nullptr;
 
     void LoadConfig();
     void SaveConfig();
@@ -80,6 +83,7 @@ private:
     bool last_macro_play_  = false;
     int  last_volume_      = -999;
     bool last_wheel_ready_ = false;
+    uint32_t last_sensor_stamp_ = 0;
 
     static void StatusBroadcastTaskEntry(void* arg);
     void StatusBroadcastLoop();
