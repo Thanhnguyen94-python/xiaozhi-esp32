@@ -8,6 +8,7 @@
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>  
 #include <freertos/task.h>  
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -125,6 +126,8 @@ private:
     static esp_err_t ApiControlHandler(httpd_req_t* req);
     static esp_err_t ApiMusicHandler(httpd_req_t* req);
     static esp_err_t ApiMacroStatusHandler(httpd_req_t* req);
+    static esp_err_t ApiOtaUploadHandler(httpd_req_t* req);
+    static esp_err_t ApiOtaUrlHandler(httpd_req_t* req);
 
     esp_err_t HandleStatus(httpd_req_t* req);
     esp_err_t HandleSettingsGet(httpd_req_t* req);
@@ -132,6 +135,11 @@ private:
     esp_err_t HandleControl(httpd_req_t* req);
     esp_err_t HandleMusic(httpd_req_t* req);
     esp_err_t HandleMacroStatus(httpd_req_t* req);
+    esp_err_t HandleOtaUpload(httpd_req_t* req);
+    esp_err_t HandleOtaUrl(httpd_req_t* req);
+    static void AppendFirmwareInfo(cJSON* root);
+    static void MarkFirmwareValidIfPending();
+    std::atomic<bool> ota_busy_{false};
 
     static bool ReadRequestBody(httpd_req_t* req, std::string& out_body, size_t max_len = 2048);
     static void SendJson(httpd_req_t* req, int status_code, const std::string& json);

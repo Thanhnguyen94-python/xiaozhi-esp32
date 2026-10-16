@@ -12,6 +12,11 @@
 
 #include <esp_log.h>
 #include <esp_timer.h>
+#include <esp_ota_ops.h>
+#include <esp_app_desc.h>
+#include <esp_image_format.h>
+#include <esp_system.h>
+#include <esp_heap_caps.h>
 #include <cJSON.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -183,6 +188,8 @@ constexpr const char* kWebUiHtml = R"HTML(
     .sns-chip b { font-size:15px; }
     .sns-chip.on { border-color:var(--danger); } .sns-chip.on b { color:var(--danger); }
     .sns-chip.ok b { color:var(--ok); } .sns-chip.off b { color:var(--text-faint); }
+    .fw-bar { height:8px; border-radius:99px; background:var(--surface-2); border:1px solid var(--border); overflow:hidden; margin-top:8px; }
+    .fw-bar > div { height:100%; width:0; background:var(--accent); transition:width .2s; }
     .sw { flex:1; display:flex; align-items:center; gap:10px; cursor:pointer; font-size:14px; }
     .sw input { appearance:none; -webkit-appearance:none; width:38px; height:22px; border-radius:99px; flex-shrink:0;
       background:var(--surface-3); border:1px solid var(--border-strong); position:relative; cursor:pointer; transition:background-color .15s; }
@@ -657,6 +664,28 @@ constexpr const char* kWebUiHtml = R"HTML(
         <button class="btn success block" id="btnSaveHw">💾 Lưu phần cứng</button>
       </div>
 
+      <div class="card hidden" id="fwCard">
+        <div class="card-h">
+          <h2>⬆️ Cập nhật firmware</h2>
+          <button class="help" data-hint="hint-fw" aria-expanded="false">?</button>
+        </div>
+        <div class="hint hidden" id="hint-fw">Chọn file <b>.bin của app</b> (vd <code>build/xiaozhi.bin</code>), không dùng file gộp (merged) hay bootloader. Robot kiểm tra file trước khi cài, cài xong tự khởi động lại. Nếu firmware mới lỗi không chạy lên được, robot tự quay về bản cũ. Các cài đặt (Wi-Fi, mật khẩu, cảm biến…) được giữ nguyên.</div>
+        <div class="sns-live" style="grid-template-columns:repeat(2,1fr)">
+          <div class="sns-chip ok" id="fwVerChip"><span>Phiên bản đang chạy</span><b>—</b></div>
+          <div class="sns-chip ok" id="fwPartChip"><span>Phân vùng</span><b>—</b></div>
+        </div>
+        <div class="sec-title">Tải file lên từ máy</div>
+        <input type="file" class="input" id="fwFile" accept=".bin">
+        <div class="fw-bar hidden" id="fwBarWrap"><div id="fwBar"></div></div>
+        <div class="muted" id="fwMsg" style="margin:6px 0; min-height:16px"></div>
+        <button class="btn primary block" id="btnFwUpload">⬆️ Tải lên & cài đặt</button>
+        <div class="sec-title" style="margin-top:14px">Hoặc cài từ đường link</div>
+        <div class="row">
+          <input type="url" class="input" id="fwUrl" placeholder="https://…/xiaozhi.bin" autocomplete="off">
+          <button class="btn" id="btnFwUrl">Cài</button>
+        </div>
+      </div>
+
       <div class="card" id="authCard">
         <div class="card-h"><h2>🔒 Bảo mật WebUI</h2></div>
         <div class="alert hidden" id="authWarn">⚠️ Bạn đang dùng mật khẩu mặc định ("admin"). Hãy đổi ngay để người khác trong mạng Wi-Fi không điều khiển được robot.</div>
@@ -1111,6 +1140,67 @@ constexpr const char* kWebUiHtml = R"HTML(
     if (res && res.ok !== false && hwState) applyHardware({ ...hwState, ...body });
   }
 
+  // ===== Cập nhật firmware =====
+  let fwMax = 0;
+  function loadFirmware(s) {
+    const ok = !!s && typeof s.fw_version === 'string';
+    $('fwCard').classList.toggle('hidden', !ok);
+    if (!ok) return;
+    fwMax = s.fw_max_size || 0;
+    setChip('fwVerChip', 'ok', s.fw_version);
+    setChip('fwPartChip', 'ok', s.fw_partition);
+    $('fwVerChip').title = 'Build: ' + (s.fw_built || '');
+  }
+  function fwSetMsg(t, err) {
+    const m = $('fwMsg');
+    m.textContent = t;
+    m.style.color = err ? 'var(--danger)' : '';
+  }
+  function uploadFirmware() {
+    const f = $('fwFile').files[0];
+    if (!f) { toast('Chọn file .bin trước', 'err'); return; }
+    if (!/\.bin$/i.test(f.name)) { toast('File phải có đuôi .bin', 'err'); return; }
+    if (fwMax && f.size > fwMax) { toast('File lớn hơn phân vùng firmware của robot', 'err'); return; }
+    if (!confirm(`Cài firmware "${f.name}" (${Math.round(f.size / 1024)} KB)? Robot sẽ tự khởi động lại.`)) return;
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/ota');
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    $('fwBarWrap').classList.remove('hidden');
+    $('fwBar').style.width = '0%';
+    $('btnFwUpload').disabled = true;
+    fwSetMsg('Đang tải lên… 0%');
+    xhr.upload.onprogress = e => {
+      if (!e.lengthComputable) return;
+      const p = Math.round(e.loaded * 100 / e.total);
+      $('fwBar').style.width = p + '%';
+      fwSetMsg(p < 100 ? `Đang tải lên… ${p}%` : 'Đang kiểm tra và ghi firmware…');
+    };
+    xhr.onload = () => {
+      let res = {};
+      try { res = JSON.parse(xhr.responseText); } catch (_) {}
+      $('btnFwUpload').disabled = false;
+      if (xhr.status === 200 && res.ok) {
+        fwSetMsg(res.message || 'Đã cài xong, robot đang khởi động lại…');
+        toast('Cài firmware thành công', 'ok');
+      } else {
+        fwSetMsg(res.message || `Thất bại (HTTP ${xhr.status})`, true);
+        toast('Cài firmware thất bại', 'err');
+      }
+    };
+    xhr.onerror = () => {
+      $('btnFwUpload').disabled = false;
+      fwSetMsg('Mất kết nối khi đang tải lên', true);
+    };
+    xhr.send(f);
+  }
+  async function installFirmwareUrl() {
+    const url = $('fwUrl').value.trim();
+    if (!/^https?:\/\//i.test(url)) { toast('Link phải bắt đầu bằng http:// hoặc https://', 'err'); return; }
+    if (!confirm('Robot sẽ tải firmware từ link này rồi tự khởi động lại. Tiếp tục?')) return;
+    const res = await apiPost('/api/ota/url', { url }, { toast: true });
+    if (res && res.ok !== false) fwSetMsg(res.message || 'Robot đang tải firmware, xem tiến độ trên màn hình robot');
+  }
+
   function confirmReboot() {
     if (confirm('Khởi động lại robot? Robot sẽ tạm thời mất kết nối trong vài giây.')) sendCtrl('robot_reboot');
   }
@@ -1181,6 +1271,7 @@ constexpr const char* kWebUiHtml = R"HTML(
         loadLife(s);
         loadSensors(s);
         applyHardware(s);
+        loadFirmware(s);
         loadAuth(s);
       }
     } catch (e) { log('INIT SETTINGS ERROR: ' + e.message); }
@@ -1544,6 +1635,8 @@ constexpr const char* kWebUiHtml = R"HTML(
     $('btnSaveLife').addEventListener('click', saveLife);
     $('btnSaveSns').addEventListener('click', saveSensors);
     $('btnSaveHw').addEventListener('click', saveHardware);
+    $('btnFwUpload').addEventListener('click', uploadFirmware);
+    $('btnFwUrl').addEventListener('click', installFirmwareUrl);
     document.querySelectorAll('#snsCard input[type=number]').forEach(i => i.addEventListener('input', () => i.classList.remove('bad')));
     document.querySelectorAll('#lifeCard input[type=number]').forEach(i => i.addEventListener('input', () => i.classList.remove('bad')));
 
@@ -1660,6 +1753,7 @@ bool RobotWebUiServer::Start(int port) {
     config.max_open_sockets = 10;
     config.lru_purge_enable = true;
     config.stack_size = 8192;
+    config.max_uri_handlers = 16;  // mac dinh 8 da dung het
 
     if (httpd_start(&server_handle_, &config) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start web UI server on port %d", port);
@@ -1721,6 +1815,24 @@ bool RobotWebUiServer::Start(int port) {
     httpd_register_uri_handler(server_handle_, &settings_post_uri);
     httpd_register_uri_handler(server_handle_, &control_uri);
     httpd_register_uri_handler(server_handle_, &music_uri);
+
+    httpd_uri_t ota_upload_uri = {
+        .uri = "/api/ota",
+        .method = HTTP_POST,
+        .handler = &RobotWebUiServer::ApiOtaUploadHandler,
+        .user_ctx = this,
+    };
+    httpd_uri_t ota_url_uri = {
+        .uri = "/api/ota/url",
+        .method = HTTP_POST,
+        .handler = &RobotWebUiServer::ApiOtaUrlHandler,
+        .user_ctx = this,
+    };
+    httpd_register_uri_handler(server_handle_, &ota_upload_uri);
+    httpd_register_uri_handler(server_handle_, &ota_url_uri);
+
+    // WebUI da chay -> firmware moi (neu vua cap nhat) duoc coi la tot, huy rollback.
+    MarkFirmwareValidIfPending();
     // ============ PHASE 1: WebSocket /ws ============
     httpd_uri_t ws_uri = {
         .uri = "/ws",
@@ -1828,6 +1940,254 @@ esp_err_t RobotWebUiServer::ApiControlHandler(httpd_req_t* req) {
     return self->HandleControl(req);
 }
 
+// ===================== Cap nhat firmware qua WebUI =====================
+
+void RobotWebUiServer::AppendFirmwareInfo(cJSON* root) {
+    const esp_app_desc_t* desc = esp_app_get_description();
+    cJSON_AddStringToObject(root, "fw_version", desc->version);
+    cJSON_AddStringToObject(root, "fw_project", desc->project_name);
+    std::string built = std::string(desc->date) + " " + desc->time;
+    cJSON_AddStringToObject(root, "fw_built", built.c_str());
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    cJSON_AddStringToObject(root, "fw_partition", running != nullptr ? running->label : "?");
+    const esp_partition_t* next = esp_ota_get_next_update_partition(nullptr);
+    cJSON_AddNumberToObject(root, "fw_max_size", next != nullptr ? next->size : 0);
+}
+
+void RobotWebUiServer::MarkFirmwareValidIfPending() {
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    esp_ota_img_states_t state;
+    if (running != nullptr && esp_ota_get_state_partition(running, &state) == ESP_OK &&
+        state == ESP_OTA_IMG_PENDING_VERIFY) {
+        esp_ota_mark_app_valid_cancel_rollback();
+        ESP_LOGI(TAG, "Firmware moi chay tot (WebUI da len) -> huy rollback");
+    }
+}
+
+static void SendOtaResult(httpd_req_t* req, int status, bool ok, const std::string& message) {
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "ok", ok);
+    cJSON_AddStringToObject(root, "message", message.c_str());
+    char* text = cJSON_PrintUnformatted(root);
+    std::string payload = text ? text : "{}";
+    if (text != nullptr) {
+        cJSON_free(text);
+    }
+    cJSON_Delete(root);
+    httpd_resp_set_status(req, status == 200 ? "200 OK" : (status == 409 ? "409 Conflict" : "400 Bad Request"));
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, payload.c_str(), payload.size());
+}
+
+static void RestartSoon() {
+    static esp_timer_handle_t timer = nullptr;
+    if (timer == nullptr) {
+        esp_timer_create_args_t args = {};
+        args.callback = [](void*) { esp_restart(); };
+        args.name = "ota_restart";
+        esp_timer_create(&args, &timer);
+    }
+    esp_timer_start_once(timer, 1500 * 1000);
+}
+
+// Kiem tra goi dau file: dung la app image ESP32-S3 cua cung du an.
+static bool ValidateAppImage(const uint8_t* data, size_t len, std::string& err, std::string& version) {
+    constexpr size_t kDescOffset = sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t);
+    if (len < kDescOffset + sizeof(esp_app_desc_t)) {
+        err = "File qua nho hoac khong phai firmware";
+        return false;
+    }
+    const auto* header = reinterpret_cast<const esp_image_header_t*>(data);
+    if (header->magic != ESP_IMAGE_HEADER_MAGIC) {
+        err = "Khong phai file firmware ESP32 (.bin cua app)";
+        return false;
+    }
+    if (header->chip_id != CONFIG_IDF_FIRMWARE_CHIP_ID) {
+        err = "Firmware danh cho chip khac, khong phai ESP32-S3";
+        return false;
+    }
+    const auto* desc = reinterpret_cast<const esp_app_desc_t*>(data + kDescOffset);
+    if (desc->magic_word != ESP_APP_DESC_MAGIC_WORD) {
+        err = "File khong co thong tin app (co the la file merged/bootloader)";
+        return false;
+    }
+    const esp_app_desc_t* running = esp_app_get_description();
+    if (strncmp(desc->project_name, running->project_name, sizeof(desc->project_name)) != 0) {
+        err = std::string("Firmware cua du an khac: ") + desc->project_name;
+        return false;
+    }
+    version.assign(desc->version, strnlen(desc->version, sizeof(desc->version)));
+    return true;
+}
+
+esp_err_t RobotWebUiServer::ApiOtaUploadHandler(httpd_req_t* req) {
+    // Giong webauth::Check nhung body la file nhi phan (application/octet-stream).
+    if (esp_timer_get_time() < webauth::detail::g_locked_until_us.load()) {
+        webauth::detail::SendLocked(req);
+        return ESP_OK;
+    }
+    if (!webauth::IsAuthorized(req)) {
+        webauth::detail::SendChallenge(req);
+        return ESP_OK;
+    }
+    std::string ct;
+    if (!webauth::detail::GetHeader(req, "Content-Type", ct, 128) ||
+        ct.compare(0, 24, "application/octet-stream") != 0) {
+        httpd_resp_set_status(req, "403 Forbidden");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_send(req, "Yeu cau khong hop le", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+    auto* self = static_cast<RobotWebUiServer*>(req->user_ctx);
+    return self->HandleOtaUpload(req);
+}
+
+esp_err_t RobotWebUiServer::HandleOtaUpload(httpd_req_t* req) {
+    if (ota_busy_.exchange(true)) {
+        SendOtaResult(req, 409, false, "Robot dang cap nhat firmware, vui long cho");
+        return ESP_OK;
+    }
+    struct BusyReset {
+        std::atomic<bool>& flag;
+        ~BusyReset() { flag.store(false); }
+    } busy_reset{ota_busy_};
+
+    const esp_partition_t* part = esp_ota_get_next_update_partition(nullptr);
+    const size_t total = req->content_len;
+    if (part == nullptr) {
+        SendOtaResult(req, 400, false, "Khong tim thay phan vung OTA");
+        return ESP_OK;
+    }
+    if (total < 64 * 1024 || total > part->size) {
+        SendOtaResult(req, 400, false, "Kich thuoc file khong hop le (toi da " +
+                                           std::to_string(part->size / 1024) + " KB)");
+        return ESP_OK;
+    }
+    if (wheel_motor_ != nullptr) {
+        wheel_motor_->Stop();
+    }
+    ESP_LOGW(TAG, "OTA qua WebUI: %u bytes -> phan vung %s", static_cast<unsigned>(total), part->label);
+
+    constexpr size_t kChunk = 4096;
+    uint8_t* buf = static_cast<uint8_t*>(heap_caps_malloc(kChunk, MALLOC_CAP_SPIRAM));
+    if (buf == nullptr) {
+        buf = static_cast<uint8_t*>(malloc(kChunk));
+    }
+    if (buf == nullptr) {
+        SendOtaResult(req, 400, false, "Khong du bo nho de cap nhat");
+        return ESP_OK;
+    }
+
+    esp_ota_handle_t handle = 0;
+    bool begun = false;
+    size_t received = 0;
+    int timeouts = 0;
+    std::string err;
+    std::string new_version;
+    int last_pct = -1;
+
+    while (received < total) {
+        int r = httpd_req_recv(req, reinterpret_cast<char*>(buf), std::min(kChunk, total - received));
+        if (r == HTTPD_SOCK_ERR_TIMEOUT) {
+            if (++timeouts > 5) {
+                err = "Het thoi gian cho du lieu";
+                break;
+            }
+            continue;
+        }
+        if (r <= 0) {
+            err = "Mat ket noi khi dang tai len";
+            break;
+        }
+        timeouts = 0;
+        if (!begun) {
+            if (!ValidateAppImage(buf, r, err, new_version)) {
+                break;
+            }
+            // Ghi tuan tu: xoa flash dan theo tung khoi, khong treo vai giay luc bat dau.
+            if (esp_ota_begin(part, OTA_WITH_SEQUENTIAL_WRITES, &handle) != ESP_OK) {
+                err = "Khong mo duoc phan vung OTA";
+                break;
+            }
+            begun = true;
+        }
+        if (esp_ota_write(handle, buf, r) != ESP_OK) {
+            err = "Ghi flash that bai";
+            break;
+        }
+        received += r;
+        int pct = static_cast<int>(received * 100 / total);
+        if (pct / 10 != last_pct / 10) {
+            last_pct = pct;
+            ESP_LOGI(TAG, "OTA %d%%", pct);
+        }
+    }
+    heap_caps_free(buf);
+
+    if (!err.empty()) {
+        if (begun) {
+            esp_ota_abort(handle);
+        }
+        ESP_LOGE(TAG, "OTA that bai: %s", err.c_str());
+        SendOtaResult(req, 400, false, err);
+        return ESP_OK;
+    }
+    esp_err_t end_err = esp_ota_end(handle);
+    if (end_err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_end: %s", esp_err_to_name(end_err));
+        SendOtaResult(req, 400, false, end_err == ESP_ERR_OTA_VALIDATE_FAILED
+                                           ? "File firmware bi loi (kiem tra checksum that bai)"
+                                           : "Khong hoan tat duoc cap nhat");
+        return ESP_OK;
+    }
+    if (esp_ota_set_boot_partition(part) != ESP_OK) {
+        SendOtaResult(req, 400, false, "Khong dat duoc phan vung khoi dong");
+        return ESP_OK;
+    }
+    ESP_LOGW(TAG, "OTA xong: phien ban %s, khoi dong lai", new_version.c_str());
+    SendOtaResult(req, 200, true, "Da cai firmware " + new_version + ". Robot dang khoi dong lai...");
+    RestartSoon();
+    return ESP_OK;
+}
+
+esp_err_t RobotWebUiServer::ApiOtaUrlHandler(httpd_req_t* req) {
+    if (!webauth::Check(req)) {
+        return ESP_OK;
+    }
+    auto* self = static_cast<RobotWebUiServer*>(req->user_ctx);
+    return self->HandleOtaUrl(req);
+}
+
+esp_err_t RobotWebUiServer::HandleOtaUrl(httpd_req_t* req) {
+    std::string body;
+    if (!ReadRequestBody(req, body, 1024)) {
+        SendOtaResult(req, 400, false, "Du lieu khong hop le");
+        return ESP_OK;
+    }
+    cJSON* root = cJSON_Parse(body.c_str());
+    const cJSON* url_json = root ? cJSON_GetObjectItem(root, "url") : nullptr;
+    std::string url = (cJSON_IsString(url_json) && url_json->valuestring) ? url_json->valuestring : "";
+    cJSON_Delete(root);
+    if (url.rfind("http://", 0) != 0 && url.rfind("https://", 0) != 0) {
+        SendOtaResult(req, 400, false, "Link phai bat dau bang http:// hoac https://");
+        return ESP_OK;
+    }
+    if (ota_busy_.load()) {
+        SendOtaResult(req, 409, false, "Robot dang cap nhat firmware, vui long cho");
+        return ESP_OK;
+    }
+    if (wheel_motor_ != nullptr) {
+        wheel_motor_->Stop();
+    }
+    ESP_LOGW(TAG, "OTA tu link: %s", url.c_str());
+    // Chay tren task chinh giong luong cap nhat goc (hien tien do tren man hinh, xong tu reboot).
+    Application::GetInstance().Schedule([url]() {
+        Application::GetInstance().UpgradeFirmware(url);
+    });
+    SendOtaResult(req, 200, true, "Robot dang tai firmware, xem tien do tren man hinh robot");
+    return ESP_OK;
+}
+
 esp_err_t RobotWebUiServer::ApiMusicHandler(httpd_req_t* req) {
     if (!webauth::Check(req)) {
         return ESP_OK;
@@ -1924,6 +2284,7 @@ esp_err_t RobotWebUiServer::HandleSettingsGet(httpd_req_t* req) {
         hardware_->AppendToJson(root);
     }
     cJSON_AddNumberToObject(root, "auth_default", webauth::IsDefaultPassword() ? 1 : 0);
+    AppendFirmwareInfo(root);
 
     char* json_text = cJSON_PrintUnformatted(root);
     std::string payload = json_text ? json_text : "{}";

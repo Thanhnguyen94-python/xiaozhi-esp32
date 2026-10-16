@@ -6,6 +6,15 @@ config OTA_URL
     help
         The application will access this URL to check for new firmwares and server address.
 
+config SKIP_SERVER_FIRMWARE_UPGRADE
+    bool "Skip firmware upgrade offered by the OTA server"
+    default y if BOARD_TYPE_BREAD_COMPACT_WIFI
+    default n
+    help
+        Chi dung OTA server de lay cau hinh ket noi/kich hoat, KHONG tu cai firmware
+        server gui ve. Bat cho firmware tuy bien (vd robot bread-compact-wifi) de server
+        chinh thuc khong ghi de firmware goc len robot. Cap nhat firmware qua WebUI.
+
 choice
     prompt "Flash Assets"
     default FLASH_DEFAULT_ASSETS if !USE_EMOTE_MESSAGE_STYLE

@@ -29,6 +29,7 @@
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/idf_additions.h>
 
 struct SensorConfig {
     int front_en         = 0;   // cam bien va cham truoc
@@ -62,7 +63,7 @@ public:
 
     ~RobotSensorHub() {
         if (task_ != nullptr) {
-            vTaskDelete(task_);
+            vTaskDeleteWithCaps(task_);
             task_ = nullptr;
         }
         if (wheels_ != nullptr) {
@@ -74,7 +75,8 @@ public:
         if (task_ != nullptr) {
             return;
         }
-        if (xTaskCreate(&TaskEntry, "robot_sensor", 4096, this, 4, &task_) != pdPASS) {
+        // Stack o PSRAM de tiet kiem RAM noi (task khong ghi flash).
+        if (xTaskCreateWithCaps(&TaskEntry, "robot_sensor", 4096, this, 4, &task_, MALLOC_CAP_SPIRAM) != pdPASS) {
             task_ = nullptr;
             ESP_LOGE(TAG, "Khong tao duoc task robot_sensor");
         }

@@ -19,6 +19,7 @@
 #include <esp_lvgl_port.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/idf_additions.h>
 #include <lvgl.h>
 
 #include <atomic>
@@ -51,7 +52,8 @@ public:
     void Start(lv_display_t* disp) {
         disp_ = disp;
         if (task_ == nullptr) {
-            xTaskCreate(&TaskEntry, "oled_hotplug", 3072, this, 1, &task_);
+            // Stack o PSRAM de tiet kiem RAM noi (task khong ghi flash).
+            xTaskCreateWithCaps(&TaskEntry, "oled_hotplug", 3072, this, 1, &task_, MALLOC_CAP_SPIRAM);
         }
     }
 
@@ -132,7 +134,7 @@ private:
     static esp_err_t Del(esp_lcd_panel_t* p) {
         HotplugOledPanel* self = Self(p);
         if (self->task_ != nullptr) {
-            vTaskDelete(self->task_);
+            vTaskDeleteWithCaps(self->task_);
             self->task_ = nullptr;
         }
         return esp_lcd_panel_del(self->real_);

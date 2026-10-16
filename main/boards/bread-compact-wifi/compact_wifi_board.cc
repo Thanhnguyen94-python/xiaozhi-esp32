@@ -28,6 +28,7 @@
 #include <sdmmc_cmd.h>
 #include <driver/sdspi_host.h>
 #include <dirent.h>
+#include <freertos/idf_additions.h>
 
 #ifdef SH1106
 #include <esp_lcd_panel_sh1106.h>
@@ -435,7 +436,9 @@ private:
 #endif
         }
         if (sd_monitor_task_ == nullptr) {
-            xTaskCreate(&SdMonitorTaskEntry, "sd_monitor", 4096, this, 1, &sd_monitor_task_);
+            // Stack o PSRAM de tiet kiem RAM noi (task chi truy cap the SD, khong ghi flash).
+            xTaskCreateWithCaps(&SdMonitorTaskEntry, "sd_monitor", 4096, this, 1, &sd_monitor_task_,
+                                MALLOC_CAP_SPIRAM);
         }
 
         // Wheel movement using 2 DC motors.

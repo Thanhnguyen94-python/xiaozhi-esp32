@@ -775,12 +775,20 @@ void Application::CheckNewVersion() {
         retry_count = 0;
         retry_delay = 10; // Reset retry delay
 
+#ifdef CONFIG_SKIP_SERVER_FIRMWARE_UPGRADE
+        if (ota_->HasNewVersion()) {
+            // Firmware tuy bien: khong de server ghi de, chi cap nhat qua WebUI.
+            ESP_LOGW(TAG, "Server offers firmware %s, skipped (CONFIG_SKIP_SERVER_FIRMWARE_UPGRADE)",
+                     ota_->GetFirmwareVersion().c_str());
+        }
+#else
         if (ota_->HasNewVersion()) {
             if (UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion())) {
                 return; // This line will never be reached after reboot
             }
             // If upgrade failed, continue to normal operation
         }
+#endif
 
         // No new version, mark the current version as valid
         ota_->MarkCurrentVersionValid();

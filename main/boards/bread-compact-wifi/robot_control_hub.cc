@@ -279,14 +279,7 @@ void RobotControlHub::RegisterTools() {
         }),
         robot_move_tool);
 
-    mcp_server.AddTool("self.robot.control",
-        "Alias of self.robot.move. Use this for robot control by voice.",
-        PropertyList({
-            Property("action", kPropertyTypeString),
-            Property("speed", kPropertyTypeInteger, 60, 0, 100),
-            Property("duration_ms", kPropertyTypeInteger, 350, 80, 5000)
-        }),
-        robot_move_tool);
+    // Server xiaozhi gioi han 32 tool: khong dang ky alias trung lap (robot.control, webui.get_ip...).
 
     auto get_webui_access_info = [this](const PropertyList&) -> ReturnValue {
         auto [url, hint] = GetWebUiAccessInfo();
@@ -314,13 +307,4 @@ void RobotControlHub::RegisterTools() {
         PropertyList(),
         get_webui_access_info);
 
-    mcp_server.AddTool("self.webui.get_ip",
-        "Get the local IP/login URL for robot WebUI and display it on OLED.",
-        PropertyList(),
-        get_webui_access_info);
-
-    mcp_server.AddTool("self.webui.get_login_link",
-        "Get WebUI login link for local robot control and show on OLED.",
-        PropertyList(),
-        get_webui_access_info);
 }
