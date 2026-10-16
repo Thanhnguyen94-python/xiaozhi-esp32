@@ -15,6 +15,7 @@
 
 class RobotLifeBehavior;
 class RobotSensorHub;
+class RobotHardware;
 
 class RobotWebUiServer {
 public:
@@ -28,6 +29,7 @@ public:
     size_t GetWsClientCount();
     void SetLifeBehavior(RobotLifeBehavior* life) { life_behavior_ = life; }
     void SetSensorHub(RobotSensorHub* sensors) { sensor_hub_ = sensors; }
+    void SetHardware(RobotHardware* hw) { hardware_ = hw; }
 
 private:
     struct MotionConfig {
@@ -45,6 +47,7 @@ private:
     esp_timer_handle_t motion_stop_timer_ = nullptr;
     RobotLifeBehavior* life_behavior_ = nullptr;
     RobotSensorHub* sensor_hub_ = nullptr;
+    RobotHardware* hardware_ = nullptr;
 
     void LoadConfig();
     void SaveConfig();

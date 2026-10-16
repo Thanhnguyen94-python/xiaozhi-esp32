@@ -15,6 +15,7 @@
 #include "robot_life_behavior.h"
 #include "hotplug_oled_panel.h"
 #include "robot_sensor_hub.h"
+#include "robot_hardware.h"
 #include "led/single_led.h"
 #include "assets/lang_config.h"
 
@@ -26,6 +27,7 @@
 #include <esp_vfs_fat.h>
 #include <sdmmc_cmd.h>
 #include <driver/sdspi_host.h>
+#include <dirent.h>
 
 #ifdef SH1106
 #include <esp_lcd_panel_sh1106.h>
@@ -53,12 +55,18 @@ private:
     Button touch_button_;
     // Nut VOL+/VOL- (GPIO40/39) da bo: am luong chinh tren WebUI. 2 chan nay de trong.
     bool sdcard_mounted_ = false;
+    bool sd_bus_ready_ = false;
+    sdmmc_card_t* sd_card_ = nullptr;
+    int sd_cs_ = SDCARD_SPI_CS;
+    int sd_freq_khz_ = SDCARD_SPI_MAX_FREQ_KHZ;
+    TaskHandle_t sd_monitor_task_ = nullptr;
     DualDcMotorController* wheel_motor_ = nullptr;
     DualServoController* head_servo_ = nullptr;
     RobotWebUiServer* web_ui_server_ = nullptr;
     RobotControlHub* control_hub_ = nullptr;
     RobotLifeBehavior* life_behavior_ = nullptr;
     RobotSensorHub* sensor_hub_ = nullptr;
+    RobotHardware* hardware_ = nullptr;
 
     void InitializeDisplayI2c() {
         i2c_master_bus_config_t bus_config = {
@@ -295,6 +303,8 @@ private:
             return;
         }
 
+        sd_bus_ready_ = true;
+
         // SDSPI often needs pull-up on lines (especially MISO and CS).
         gpio_set_pull_mode(SDCARD_SPI_MISO, GPIO_PULLUP_ONLY);
         gpio_set_pull_mode(SDCARD_SPI_MOSI, GPIO_PULLUP_ONLY);
@@ -333,6 +343,9 @@ private:
                 ret = esp_vfs_fat_sdspi_mount(SDCARD_MOUNT_POINT, &host, &slot_cfg, &mount_cfg, &card);
                 if (ret == ESP_OK) {
                     sdcard_mounted_ = true;
+                    sd_card_ = card;
+                    sd_cs_ = cs;
+                    sd_freq_khz_ = freq_khz;
                     sdmmc_card_print_info(stdout, card);
                     ESP_LOGI(TAG, "SD card mounted at %s (CS=%d, freq=%dkHz)", SDCARD_MOUNT_POINT, cs, freq_khz);
                     return;
@@ -348,8 +361,83 @@ private:
                  SDCARD_SPI_MISO, SDCARD_SPI_MOSI, SDCARD_SPI_SCLK, SDCARD_SPI_CS);
     }
 
+    // Mount lai the SD voi CS/tan so da biet, tat log loi de khong spam khi chua cam the.
+    bool RemountSdQuiet() {
+        static const char* kTags[] = {"vfs_fat_sdmmc", "sdmmc_common", "sdmmc_init", "sdmmc_sd",
+                                      "sdspi_host", "sdspi_transaction", "diskio_sdmmc"};
+        constexpr size_t kTagCount = sizeof(kTags) / sizeof(kTags[0]);
+        esp_log_level_t saved[kTagCount];
+        for (size_t i = 0; i < kTagCount; ++i) {
+            saved[i] = esp_log_level_get(kTags[i]);
+            esp_log_level_set(kTags[i], ESP_LOG_NONE);
+        }
+
+        sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+        host.max_freq_khz = sd_freq_khz_;
+        sdspi_device_config_t slot_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
+        slot_cfg.host_id = (spi_host_device_t)host.slot;
+        slot_cfg.gpio_cs = static_cast<gpio_num_t>(sd_cs_);
+        esp_vfs_fat_sdmmc_mount_config_t mount_cfg = {
+            .format_if_mount_failed = false,
+            .max_files = 5,
+            .allocation_unit_size = 0,
+            .disk_status_check_enable = true,
+        };
+        sdmmc_card_t* card = nullptr;
+        esp_err_t ret = esp_vfs_fat_sdspi_mount(SDCARD_MOUNT_POINT, &host, &slot_cfg, &mount_cfg, &card);
+
+        for (size_t i = 0; i < kTagCount; ++i) {
+            esp_log_level_set(kTags[i], saved[i]);
+        }
+        if (ret != ESP_OK) {
+            return false;
+        }
+        sd_card_ = card;
+        return true;
+    }
+
+    // Theo doi the SD: rut ra -> unmount + bao WebUI; cam lai -> tu mount lai.
+    static void SdMonitorTaskEntry(void* arg) {
+        static_cast<CompactWifiBoard*>(arg)->SdMonitorLoop();
+    }
+
+    void SdMonitorLoop() {
+        while (true) {
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            if (sd_card_ != nullptr) {
+                // opendir di qua FatFs -> kiem tra trang thai the (disk_status_check_enable).
+                DIR* dir = opendir(SDCARD_MOUNT_POINT);
+                if (dir != nullptr) {
+                    closedir(dir);
+                    continue;
+                }
+                ESP_LOGW(TAG, "The SD da bi rut ra -> unmount");
+                esp_vfs_fat_sdcard_unmount(SDCARD_MOUNT_POINT, sd_card_);
+                sd_card_ = nullptr;
+                sdcard_mounted_ = false;
+                hardware_->SetSdcardPresent(false);
+            } else if (sd_bus_ready_ && RemountSdQuiet()) {
+                ESP_LOGI(TAG, "Da nhan lai the SD (CS=%d, %dkHz)", sd_cs_, sd_freq_khz_);
+                sdcard_mounted_ = true;
+                hardware_->SetSdcardPresent(true);
+            }
+        }
+    }
+
     // 物联网初始化，逐步迁移到 MCP 协议
     void InitializeTools() {
+        if (hardware_ == nullptr) {
+            hardware_ = new RobotHardware();
+#ifdef CONFIG_BREAD_COMPACT_WIFI_DUAL_OLED
+            hardware_->SetDetected(sdcard_mounted_, text_hotplug_ != nullptr);
+#else
+            hardware_->SetDetected(sdcard_mounted_, false);
+#endif
+        }
+        if (sd_monitor_task_ == nullptr) {
+            xTaskCreate(&SdMonitorTaskEntry, "sd_monitor", 4096, this, 1, &sd_monitor_task_);
+        }
+
         // Wheel movement using 2 DC motors.
         // Use dedicated namespace only to avoid affecting existing servo control flows.
         if (wheel_motor_ == nullptr) {
@@ -360,8 +448,12 @@ private:
                 WHEEL_MOTOR_RIGHT_IN2_GPIO,
                 {"self.robot.wheels"});
 
-            // RC override via MC7RE SBUS (MC6C transmitter).
-            rc_sbus::Init(wheel_motor_);
+            // RC override via MC7RE SBUS (MC6C transmitter). Tat tren WebUI -> khong khoi dong.
+            if (hardware_->RcEnabled()) {
+                rc_sbus::Init(wheel_motor_);
+            } else {
+                ESP_LOGI(TAG, "Tay cam RC dang tat (WebUI > Cai dat > Phan cung)");
+            }
         }
 
         // Dedicated head pan-tilt tools and emotion binding.
@@ -384,12 +476,9 @@ private:
         if (web_ui_server_ == nullptr) {
             web_ui_server_ = new RobotWebUiServer(wheel_motor_, head_servo_);
             web_ui_server_->SetSensorHub(sensor_hub_);
+            web_ui_server_->SetHardware(hardware_);
         }
 
-        if (control_hub_ == nullptr) {
-            control_hub_ = new RobotControlHub(wheel_motor_, head_servo_, GetDisplay());
-            control_hub_->RegisterTools();
-        }
         if (control_hub_ == nullptr) {
             control_hub_ = new RobotControlHub(wheel_motor_, head_servo_, GetDisplay());
             control_hub_->RegisterTools();
@@ -398,6 +487,7 @@ private:
         if (life_behavior_ == nullptr) {
             life_behavior_ = new RobotLifeBehavior(wheel_motor_, head_servo_);
             life_behavior_->SetSensorHub(sensor_hub_);
+            life_behavior_->SetHardware(hardware_);
             if (web_ui_server_ != nullptr) {
                 web_ui_server_->SetLifeBehavior(life_behavior_);
             }

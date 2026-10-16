@@ -8,6 +8,7 @@
 #include "settings.h"
 #include "robot_life_behavior.h"
 #include "robot_sensor_hub.h"
+#include "robot_hardware.h"
 
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -330,7 +331,7 @@ constexpr const char* kWebUiHtml = R"HTML(
   <section class="panel" data-panel="control">
     <div class="grid">
 
-      <div class="card span-2">
+      <div class="card span-2" id="wheelCard">
         <div class="card-h"><h2>🎮 Điều khiển bánh xe</h2></div>
         <div class="seg" id="joyModeSeg">
           <label><input type="radio" name="joyMode" value="dpad"> D-pad</label>
@@ -391,7 +392,7 @@ constexpr const char* kWebUiHtml = R"HTML(
         <button class="btn ghost block sm" id="btnMacroClear" style="margin-top:8px">Xoá macro đang có trong bộ nhớ tạm</button>
       </div>
 
-      <div class="card">
+      <div class="card" id="headCard">
         <div class="card-h"><h2>🗣️ Servo cổ</h2></div>
         <div class="btn-grid">
           <button class="btn" data-cmd="head_center">🎯 Cân bằng</button>
@@ -437,8 +438,9 @@ constexpr const char* kWebUiHtml = R"HTML(
         </div>
       </div>
 
-      <div class="card">
+      <div class="card" id="musicCard">
         <div class="card-h"><h2>🎵 Âm nhạc & thẻ SD</h2></div>
+        <div class="alert hidden" id="sdWarn" style="margin-bottom:10px">⚠️ Robot không thấy thẻ SD: phát nhạc từ thẻ và lưu/tải macro sẽ không dùng được. Cắm thẻ (FAT32) vào, robot sẽ tự nhận lại sau vài giây.</div>
         <div class="btn-grid" style="margin-bottom:12px">
           <button class="btn" data-music="play_mood" data-mood="vuive">😊 Nhạc vui</button>
           <button class="btn" data-music="play_mood" data-mood="buon">😢 Nhạc buồn</button>
@@ -467,7 +469,7 @@ constexpr const char* kWebUiHtml = R"HTML(
         <div class="hint hidden" id="hint-main">Robot tự gật/lắc đầu và nhích nhẹ khi trò chuyện để trông sinh động hơn. Chỉnh xong nhớ bấm "Lưu". Giá trị được nhớ cả khi tắt nguồn.</div>
 
         <div class="grid" style="gap:18px">
-          <div>
+          <div id="lifeHeadCol">
             <div class="sec-title">Cử động đầu</div>
             <div class="sw-row"><label class="sw"><input type="checkbox" id="lfHead"> Cử động đầu khi robot đang nói</label><button class="help" data-hint="hint-head">?</button></div>
             <div class="hint hidden" id="hint-head">Đầu gật/lắc ngẫu nhiên nhẹ trong lúc robot trả lời. Tắt nếu thấy tiếng servo làm phiền.</div>
@@ -486,7 +488,7 @@ constexpr const char* kWebUiHtml = R"HTML(
             </div>
           </div>
 
-          <div>
+          <div id="lifeWheelCol">
             <div class="sec-title">Nhích bánh xe</div>
             <div class="sw-row"><label class="sw"><input type="checkbox" id="lfWheel"> ⚠️ Cho phép nhích bánh xe khi robot nói</label><button class="help" data-hint="hint-wheel">?</button></div>
             <div class="hint warn hidden" id="hint-wheel">Robot sẽ tiến/lùi nhẹ khi đang nói. Chỉ bật sau khi bạn đã bấm "Thử nhích" và đo quãng đường bên dưới. Đặt robot ở giữa bàn, cách mép bàn xa hơn "Giới hạn lệch" ít nhất 20 cm. Lệnh dừng từ web, giọng nói hoặc tay cầm RC luôn được ưu tiên.</div>
@@ -598,7 +600,7 @@ constexpr const char* kWebUiHtml = R"HTML(
             <div></div>
           </div>
           <div class="sw-row" style="margin-top:8px"><label class="sw"><input type="checkbox" id="snsFace"> Đổi mặt "giật mình" khi va chạm</label></div>
-          <div class="sw-row"><label class="sw"><input type="checkbox" id="snsRcBypass"> ⚠️ Cho tay cầm RC vượt qua cảm biến</label><button class="help" data-hint="hint-sns-rc">?</button></div>
+          <div class="sw-row" id="snsRcRow"><label class="sw"><input type="checkbox" id="snsRcBypass"> ⚠️ Cho tay cầm RC vượt qua cảm biến</label><button class="help" data-hint="hint-sns-rc">?</button></div>
           <div class="hint warn hidden" id="hint-sns-rc">Khi bật, lúc bạn đang lái bằng tay cầm RC robot sẽ không bị cảm biến chặn (bạn tự chịu trách nhiệm quan sát). Các nguồn lệnh khác vẫn bị chặn.</div>
         </div>
       </div>
@@ -615,6 +617,7 @@ constexpr const char* kWebUiHtml = R"HTML(
 
       <div class="card" id="setCard">
         <div class="card-h"><h2>⚙️ Thông số chuyển động & âm thanh</h2><span class="pill hidden" id="setDirty">Chưa lưu</span></div>
+        <div id="setMotion">
         <div class="field">
           <div class="lbl">Tốc độ tiến <output id="vMove">60</output></div>
           <input type="range" id="moveSpeed" min="0" max="100" value="60" data-out="vMove">
@@ -627,11 +630,31 @@ constexpr const char* kWebUiHtml = R"HTML(
           <div class="lbl">Bước di chuyển (ms) <output id="vStep">350</output></div>
           <input type="range" id="stepMs" min="80" max="2000" value="350" data-out="vStep">
         </div>
+        </div>
         <div class="field">
           <div class="lbl">Âm lượng loa <output id="vVol">60</output></div>
           <input type="range" id="volume" min="0" max="100" value="60" data-out="vVol">
         </div>
         <button class="btn success block" id="btnSaveSettings">💾 Lưu cài đặt</button>
+      </div>
+
+      <div class="card hidden" id="hwCard">
+        <div class="card-h">
+          <h2>🧩 Phần cứng</h2>
+          <button class="help" data-hint="hint-hw" aria-expanded="false">?</button>
+        </div>
+        <div class="hint hidden" id="hint-hw">Tắt các bộ phận robot của bạn không có, giao diện sẽ ẩn phần điều khiển tương ứng và robot không cử động phần đó. Thẻ SD được theo dõi liên tục (rút/cắm tự nhận); màn phụ được phát hiện khi khởi động.</div>
+        <div class="sec-title">Bạn tự chọn</div>
+        <div class="sw-row"><label class="sw"><input type="checkbox" id="hwWheels"> Bánh xe (2 động cơ DC)</label></div>
+        <div class="sw-row"><label class="sw"><input type="checkbox" id="hwHead"> Servo cổ (pan-tilt)</label></div>
+        <div class="sw-row"><label class="sw"><input type="checkbox" id="hwRc"> Tay cầm RC (bộ thu SBUS)</label></div>
+        <div class="alert hidden" id="hwRcReboot" style="margin:6px 0">Thay đổi tay cầm RC có hiệu lực sau khi khởi động lại robot.</div>
+        <div class="sec-title" style="margin-top:12px">Robot tự phát hiện</div>
+        <div class="sns-live" style="grid-template-columns:repeat(2,1fr)">
+          <div class="sns-chip off" id="hwSdChip"><span>Thẻ SD</span><b>—</b></div>
+          <div class="sns-chip off" id="hwOled2Chip"><span>Màn phụ 0.91"</span><b>—</b></div>
+        </div>
+        <button class="btn success block" id="btnSaveHw">💾 Lưu phần cứng</button>
       </div>
 
       <div class="card" id="authCard">
@@ -798,7 +821,8 @@ constexpr const char* kWebUiHtml = R"HTML(
 
   // ===== Tabs =====
   function showTab(name) {
-    if (!document.querySelector(`.panel[data-panel="${name}"]`)) name = 'control';
+    const tabBtn = document.querySelector(`.tab[data-tab="${name}"]`);
+    if (!document.querySelector(`.panel[data-panel="${name}"]`) || (tabBtn && tabBtn.classList.contains('hidden'))) name = 'control';
     document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name ? 'true' : 'false'));
     document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.dataset.panel === name));
     currentTab = name;
@@ -880,6 +904,7 @@ constexpr const char* kWebUiHtml = R"HTML(
       $('stSpeed').textContent = `${st.left_speed}/${st.right_speed}`;
       $('stVol').textContent = `${st.volume}%`;
       renderSensors(st);
+      renderSdcard(st);
     }
   }
 
@@ -1044,6 +1069,48 @@ constexpr const char* kWebUiHtml = R"HTML(
     else setChip('snsLiveTof', 'ok', m.sns_tof_mm_now < 0 ? 'Xa / trống' : `${m.sns_tof_mm_now} mm`);
   }
 
+  // ===== Phần cứng: ẩn phần giao diện của bộ phận không có =====
+  let hwState = null;
+  function applyHardware(s) {
+    const ok = !!s && s.hw_wheels !== undefined;
+    $('hwCard').classList.toggle('hidden', !ok);
+    if (!ok) return;
+    hwState = s;
+    $('hwWheels').checked = !!s.hw_wheels;
+    $('hwHead').checked = !!s.hw_head;
+    $('hwRc').checked = !!s.hw_rc;
+    const wheels = !!s.hw_wheels, head = !!s.hw_head;
+    const hide = (id, h) => { const el = $(id); if (el) el.classList.toggle('hidden', h); };
+    hide('wheelCard', !wheels);
+    hide('setMotion', !wheels);
+    hide('lifeWheelCol', !wheels);
+    hide('headCard', !head);
+    hide('lifeHeadCol', !head);
+    hide('snsRcRow', !s.hw_rc);
+    hide('sdWarn', !!s.hw_sdcard);
+    const tab = (name, h) => {
+      const t = document.querySelector(`.tab[data-tab="${name}"]`);
+      if (t) t.classList.toggle('hidden', h);
+    };
+    tab('sensor', !wheels);
+    tab('life', !wheels && !head);
+    $('hwRcReboot').classList.toggle('hidden', !!s.hw_rc === !!s.hw_rc_running);
+    setChip('hwSdChip', s.hw_sdcard ? 'ok' : 'on', s.hw_sdcard ? '✅ Có' : '❌ Không thấy');
+    setChip('hwOled2Chip', s.hw_oled2 ? 'ok' : 'off', s.hw_oled2 ? '✅ Có' : 'Không có');
+    if (currentTab) showTab(currentTab);
+  }
+  function renderSdcard(m) {
+    if (typeof m.hw_sdcard !== 'number' || !hwState) return;
+    hwState.hw_sdcard = m.hw_sdcard;
+    $('sdWarn').classList.toggle('hidden', !!m.hw_sdcard);
+    setChip('hwSdChip', m.hw_sdcard ? 'ok' : 'on', m.hw_sdcard ? '✅ Có' : '❌ Không thấy');
+  }
+  async function saveHardware() {
+    const body = { hw_wheels: $('hwWheels').checked ? 1 : 0, hw_head: $('hwHead').checked ? 1 : 0, hw_rc: $('hwRc').checked ? 1 : 0 };
+    const res = await apiPost('/api/settings', body, { toast: 'Đã lưu phần cứng' });
+    if (res && res.ok !== false && hwState) applyHardware({ ...hwState, ...body });
+  }
+
   function confirmReboot() {
     if (confirm('Khởi động lại robot? Robot sẽ tạm thời mất kết nối trong vài giây.')) sendCtrl('robot_reboot');
   }
@@ -1113,6 +1180,7 @@ constexpr const char* kWebUiHtml = R"HTML(
         setRange('volume', 'vVol', s.volume);
         loadLife(s);
         loadSensors(s);
+        applyHardware(s);
         loadAuth(s);
       }
     } catch (e) { log('INIT SETTINGS ERROR: ' + e.message); }
@@ -1158,6 +1226,7 @@ constexpr const char* kWebUiHtml = R"HTML(
           }
           if (typeof msg.volume === 'number') $('stVol').textContent = `${msg.volume}%`;
           renderSensors(msg);
+          renderSdcard(msg);
         } else if (msg.type === 'motor') {
           $('joyL').textContent = msg.left;
           $('joyR').textContent = msg.right;
@@ -1474,6 +1543,7 @@ constexpr const char* kWebUiHtml = R"HTML(
     $('btnSaveSettings').addEventListener('click', saveSettings);
     $('btnSaveLife').addEventListener('click', saveLife);
     $('btnSaveSns').addEventListener('click', saveSensors);
+    $('btnSaveHw').addEventListener('click', saveHardware);
     document.querySelectorAll('#snsCard input[type=number]').forEach(i => i.addEventListener('input', () => i.classList.remove('bad')));
     document.querySelectorAll('#lifeCard input[type=number]').forEach(i => i.addEventListener('input', () => i.classList.remove('bad')));
 
@@ -1803,6 +1873,9 @@ void RobotWebUiServer::BuildStatusJson(std::string& out, bool include_type) {
     if (sensor_hub_ != nullptr) {
         sensor_hub_->AppendStatusToJson(root);
     }
+    if (hardware_ != nullptr) {
+        hardware_->AppendStatusToJson(root);
+    }
 
     char* json_text = cJSON_PrintUnformatted(root);
     out = json_text ? json_text : "{}";
@@ -1846,6 +1919,9 @@ esp_err_t RobotWebUiServer::HandleSettingsGet(httpd_req_t* req) {
     }
     if (sensor_hub_ != nullptr) {
         sensor_hub_->AppendConfigToJson(root);
+    }
+    if (hardware_ != nullptr) {
+        hardware_->AppendToJson(root);
     }
     cJSON_AddNumberToObject(root, "auth_default", webauth::IsDefaultPassword() ? 1 : 0);
 
@@ -1907,6 +1983,9 @@ esp_err_t RobotWebUiServer::HandleSettingsPost(httpd_req_t* req) {
     }
     if (sensor_hub_ != nullptr) {
         sensor_hub_->ApplyConfigFromJson(root);
+    }
+    if (hardware_ != nullptr) {
+        hardware_->ApplyFromJson(root);
     }
     auto* new_pw = cJSON_GetObjectItem(root, "new_password");
     if (cJSON_IsString(new_pw) && new_pw->valuestring != nullptr) {
@@ -2408,6 +2487,9 @@ void RobotWebUiServer::StatusBroadcastLoop() {
             wheel_motor_->GetSpeed(left, right);
         }
         uint32_t sensor_stamp = (sensor_hub_ != nullptr) ? sensor_hub_->StatusStamp() : 0;
+        if (hardware_ != nullptr) {
+            sensor_stamp += hardware_->StatusStamp() * 7919u;  // gop 2 bo dem thay doi
+        }
 
         int vol = 0;
         auto codec = Board::GetInstance().GetAudioCodec();

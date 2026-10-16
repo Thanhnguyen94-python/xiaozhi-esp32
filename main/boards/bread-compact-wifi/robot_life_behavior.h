@@ -11,6 +11,7 @@
 #include "dual_servo_controller.h"
 #include "rc_sbus_controller.h"
 #include "robot_sensor_hub.h"
+#include "robot_hardware.h"
 #include "settings.h"
 
 #include <algorithm>
@@ -78,6 +79,9 @@ public:
 
     // Cam bien an toan (tuy chon): khong nhich ve phia dang bi chan / mep ban.
     void SetSensorHub(RobotSensorHub* sensors) { sensors_ = sensors; }
+
+    // Phan cung bi tat tren WebUI thi khong cu dong phan do.
+    void SetHardware(RobotHardware* hw) { hw_ = hw; }
 
     // Tam dung/tiep tuc (vi du khi macro dang phat). Mac dinh bat.
     void SetEnabled(bool enabled) { enabled_.store(enabled); }
@@ -170,6 +174,7 @@ private:
     DualDcMotorController* wheel_motor_ = nullptr;
     DualServoController* head_servo_ = nullptr;
     RobotSensorHub* sensors_ = nullptr;
+    RobotHardware* hw_ = nullptr;
     TaskHandle_t task_ = nullptr;
     std::atomic<bool> enabled_{true};
 
@@ -287,8 +292,10 @@ private:
         return false;  // co lenh khac chen vao, khong dung banh cua ho
     }
 
+    bool HeadOn() const { return hw_ == nullptr || hw_->HeadEnabled(); }
+
     void Nudge(const LifeConfig& c) {
-        if (!c.enable_wheel) {
+        if (!c.enable_wheel || (hw_ != nullptr && !hw_->WheelsEnabled())) {
             return;
         }
         if (!WheelsFree()) {
@@ -320,7 +327,7 @@ private:
     }
 
     void OnEnterState(DeviceState from, DeviceState to, uint32_t now, const LifeConfig& c) {
-        if (from == kDeviceStateSpeaking && head_servo_ != nullptr) {
+        if (from == kDeviceStateSpeaking && head_servo_ != nullptr && HeadOn()) {
             head_servo_->RunAction("center");  // tra dau ve giua khi noi xong
         }
         voice_since_ms_ = 0;
@@ -351,7 +358,7 @@ private:
 
             switch (state) {
                 case kDeviceStateSpeaking:
-                    if (c.enable_head_talk && now >= next_talk_ms_) {
+                    if (c.enable_head_talk && HeadOn() && now >= next_talk_ms_) {
                         head_servo_->talkingMotion();
                         next_talk_ms_ = now + RandRange(kTalkMinGapMs, kTalkMaxGapMs);
                     }
@@ -362,7 +369,7 @@ private:
                     break;
 
                 case kDeviceStateListening:
-                    if (c.enable_listen_nod && app.IsVoiceDetected()) {
+                    if (c.enable_listen_nod && HeadOn() && app.IsVoiceDetected()) {
                         if (voice_since_ms_ == 0) {
                             voice_since_ms_ = now;
                         }
@@ -378,7 +385,7 @@ private:
                     break;
 
                 case kDeviceStateIdle:
-                    if (c.enable_idle && now >= next_idle_ms_) {
+                    if (c.enable_idle && HeadOn() && now >= next_idle_ms_) {
                         head_servo_->curiousHeadTilt();
                         next_idle_ms_ = now + RandRange(c.idle_gap_min_s * 1000u, c.idle_gap_max_s * 1000u);
                     }
