@@ -6,7 +6,9 @@
             "sdkconfig_append": [
                 "CONFIG_OLED_SSD1306_128X32=y",
                 "CONFIG_LWIP_MAX_SOCKETS=16",
-                "CONFIG_HTTPD_WS_SUPPORT=y"
+                "CONFIG_HTTPD_WS_SUPPORT=y",
+                "CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y",
+                "CONFIG_ROBOT_FW_HUB_URL=\"https://introduce-myself-topaz.vercel.app\""
             ]
         },
         {
@@ -14,7 +16,9 @@
             "sdkconfig_append": [
                 "CONFIG_OLED_SSD1306_128X64=y",
                 "CONFIG_LWIP_MAX_SOCKETS=16",
-                "CONFIG_HTTPD_WS_SUPPORT=y"
+                "CONFIG_HTTPD_WS_SUPPORT=y",
+                "CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y",
+                "CONFIG_ROBOT_FW_HUB_URL=\"https://introduce-myself-topaz.vercel.app\""
             ]
         }
     ]

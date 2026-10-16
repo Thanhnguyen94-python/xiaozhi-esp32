@@ -28,6 +28,7 @@
 #include <sdmmc_cmd.h>
 #include <driver/sdspi_host.h>
 #include <dirent.h>
+#include <wifi_manager.h>
 #include <freertos/idf_additions.h>
 
 #ifdef SH1106
@@ -61,6 +62,8 @@ private:
     int sd_cs_ = SDCARD_SPI_CS;
     int sd_freq_khz_ = SDCARD_SPI_MAX_FREQ_KHZ;
     TaskHandle_t sd_monitor_task_ = nullptr;
+    TaskHandle_t webui_watch_task_ = nullptr;
+    bool webui_started_ = false;
     DualDcMotorController* wheel_motor_ = nullptr;
     DualServoController* head_servo_ = nullptr;
     RobotWebUiServer* web_ui_server_ = nullptr;
@@ -501,13 +504,59 @@ private:
         if (web_ui_server_ == nullptr) {
             return;
         }
-        if (!web_ui_server_->Start(80)) {
-            ESP_LOGE(TAG, "Failed to start local Robot Web UI");
-            return;
+        // Dang o che do cau hinh Wi-Fi: trang cau hinh giu cong 80 -> WebUI khoi dong sau.
+        if (!WifiManager::GetInstance().IsConfigMode() && web_ui_server_->Start(80)) {
+            webui_started_ = true;
+            if (control_hub_ != nullptr) {
+                control_hub_->ShowWebUiAccessOnDisplay();
+            }
+        } else {
+            ESP_LOGW(TAG, "Robot Web UI chua khoi dong duoc, se thu lai sau khi cau hinh Wi-Fi xong");
         }
+        if (webui_watch_task_ == nullptr) {
+            xTaskCreateWithCaps(&WebUiWatchTaskEntry, "webui_watch", 4096, this, 1, &webui_watch_task_,
+                                MALLOC_CAP_SPIRAM);
+        }
+    }
 
-        if (control_hub_ != nullptr) {
-            control_hub_->ShowWebUiAccessOnDisplay();
+    static void WebUiWatchTaskEntry(void* arg) {
+        static_cast<CompactWifiBoard*>(arg)->WebUiWatchLoop();
+    }
+
+    // - Che do cau hinh Wi-Fi: hien QR de dien thoai quet la vao diem phat cua robot.
+    // - Cau hinh xong: khoi dong WebUI (cong 80 da duoc giai phong), co IP thi hien QR WebUI.
+    void WebUiWatchLoop() {
+        bool wifi_qr_shown = false;
+        bool show_webui_qr = false;
+        while (true) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            auto& wifi = WifiManager::GetInstance();
+            bool config_mode = wifi.IsConfigMode();
+
+            if (control_hub_ != nullptr && config_mode != wifi_qr_shown) {
+                if (config_mode) {
+                    control_hub_->ShowWifiSetupQrOnDisplay();
+                } else {
+                    control_hub_->HideQrOnDisplay();
+                }
+                wifi_qr_shown = config_mode;
+            }
+            if (config_mode) {
+                continue;
+            }
+
+            if (!webui_started_) {
+                if (web_ui_server_->Start(80)) {
+                    webui_started_ = true;
+                    show_webui_qr = true;
+                    ESP_LOGI(TAG, "Robot Web UI da khoi dong sau khi cau hinh Wi-Fi");
+                }
+                continue;
+            }
+            if (show_webui_qr && wifi.IsConnected() && control_hub_ != nullptr) {
+                control_hub_->ShowWebUiAccessOnDisplay();
+                show_webui_qr = false;
+            }
         }
     }
 

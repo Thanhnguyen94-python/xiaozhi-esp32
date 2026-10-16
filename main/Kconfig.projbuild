@@ -15,6 +15,15 @@ config SKIP_SERVER_FIRMWARE_UPGRADE
         server gui ve. Bat cho firmware tuy bien (vd robot bread-compact-wifi) de server
         chinh thuc khong ghi de firmware goc len robot. Cap nhat firmware qua WebUI.
 
+config ROBOT_FW_HUB_URL
+    string "Firmware hub URL (web app luu firmware)"
+    default "https://introduce-myself-topaz.vercel.app" if BOARD_TYPE_BREAD_COMPACT_WIFI
+    default ""
+    help
+        Dia chi web app luu firmware, vd https://introduce-myself-topaz.vercel.app
+        WebUI robot goi <URL>/api/firmware/latest de nut "Kiem tra ban moi" tim firmware moi.
+        De trong thi nguoi dung tu nhap dia chi tren WebUI.
+
 choice
     prompt "Flash Assets"
     default FLASH_DEFAULT_ASSETS if !USE_EMOTE_MESSAGE_STYLE

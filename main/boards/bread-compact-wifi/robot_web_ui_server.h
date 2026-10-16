@@ -88,6 +88,7 @@ private:
     int  last_volume_      = -999;
     bool last_wheel_ready_ = false;
     uint32_t last_sensor_stamp_ = 0;
+    uint32_t last_ota_stamp_ = 0;
 
     static void StatusBroadcastTaskEntry(void* arg);
     void StatusBroadcastLoop();
@@ -140,6 +141,19 @@ private:
     static void AppendFirmwareInfo(cJSON* root);
     static void MarkFirmwareValidIfPending();
     std::atomic<bool> ota_busy_{false};
+
+    // Trang thai cap nhat firmware -> WebUI (status "ota_*") + man hinh robot.
+    enum OtaStage { kOtaIdle = 0, kOtaDownloading = 1, kOtaUploading = 2, kOtaRebooting = 3, kOtaFailed = 4 };
+    std::atomic<int> ota_stage_{kOtaIdle};
+    std::atomic<int> ota_pct_{0};
+    std::atomic<uint32_t> ota_stamp_{0};
+    std::mutex ota_mutex_;  // bao ve ota_url_, ota_err_
+    std::string ota_url_;
+    std::string ota_err_;
+    void SetOtaState(int stage, int pct, const std::string& err = "");
+    static void OtaUrlTaskEntry(void* arg);
+    void OtaUrlTask();
+    bool DownloadFirmware(const std::string& url, std::string& err, std::string& version);
 
     static bool ReadRequestBody(httpd_req_t* req, std::string& out_body, size_t max_len = 2048);
     static void SendJson(httpd_req_t* req, int status_code, const std::string& json);

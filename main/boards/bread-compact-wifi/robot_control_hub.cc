@@ -135,8 +135,30 @@ void RobotControlHub::HideWebUiQrOnDisplay() {
 }
 
 void RobotControlHub::ShowWebUiQrOnDisplay(const std::string& url) {
+    ShowQrPopup(url, "Scan QR\nWebUI", "10s", 10);
+}
+
+void RobotControlHub::ShowWifiSetupQrOnDisplay() {
+    std::string ssid = WifiManager::GetInstance().GetApSsid();
+    if (ssid.empty()) {
+        return;
+    }
+    // Chuan QR Wi-Fi: dien thoai quet bang camera la vao diem phat (mang mo, khong mat khau),
+    // sau do trang cau hinh tu bat len (captive portal).
+    std::string escaped;
+    for (char c : ssid) {
+        if (c == '\\' || c == ';' || c == ',' || c == ':' || c == '"') {
+            escaped += '\\';
+        }
+        escaped += c;
+    }
+    ShowQrPopup("WIFI:T:nopass;S:" + escaped + ";;", "Quet QR\nde cai\nWi-Fi", nullptr, 0);
+}
+
+void RobotControlHub::ShowQrPopup(const std::string& payload, const char* label_text, const char* hint_text,
+                                  int hide_after_s) {
 #if CONFIG_LV_USE_QRCODE
-    if (display_ == nullptr || url.empty()) {
+    if (display_ == nullptr || payload.empty()) {
         return;
     }
 
@@ -168,31 +190,38 @@ void RobotControlHub::ShowWebUiQrOnDisplay(const std::string& url) {
     lv_qrcode_set_light_color(qr, lv_color_white());
     lv_qrcode_set_quiet_zone(qr, true);
 
-    if (lv_qrcode_update(qr, url.c_str(), static_cast<uint32_t>(url.size())) != LV_RESULT_OK) {
+    if (lv_qrcode_update(qr, payload.c_str(), static_cast<uint32_t>(payload.size())) != LV_RESULT_OK) {
         lv_obj_del(qr_popup_);
         qr_popup_ = nullptr;
-        ESP_LOGW(TAG, "Khong tao duoc QR cho URL: %s", url.c_str());
+        ESP_LOGW(TAG, "Khong tao duoc QR cho: %s", payload.c_str());
         return;
     }
 
     lv_obj_align(qr, LV_ALIGN_LEFT_MID, 2, 0);
 
     auto* label = lv_label_create(qr_popup_);
-    lv_label_set_text(label, "Scan QR\nWebUI");
+    lv_label_set_text(label, label_text);
     lv_obj_set_style_text_color(label, lv_color_black(), 0);
-    lv_obj_align(label, LV_ALIGN_RIGHT_MID, -4, -8);
+    lv_obj_align(label, LV_ALIGN_RIGHT_MID, -4, hint_text != nullptr ? -8 : 0);
 
-    auto* hint = lv_label_create(qr_popup_);
-    lv_label_set_text(hint, "10s");
-    lv_obj_set_style_text_color(hint, lv_color_black(), 0);
-    lv_obj_align(hint, LV_ALIGN_RIGHT_MID, -8, 18);
+    if (hint_text != nullptr) {
+        auto* hint = lv_label_create(qr_popup_);
+        lv_label_set_text(hint, hint_text);
+        lv_obj_set_style_text_color(hint, lv_color_black(), 0);
+        lv_obj_align(hint, LV_ALIGN_RIGHT_MID, -8, 18);
+    }
 
     if (qr_hide_timer_ != nullptr) {
         esp_timer_stop(qr_hide_timer_);
-        esp_timer_start_once(qr_hide_timer_, 10ULL * 1000ULL * 1000ULL);
+        if (hide_after_s > 0) {
+            esp_timer_start_once(qr_hide_timer_, static_cast<uint64_t>(hide_after_s) * 1000ULL * 1000ULL);
+        }
     }
 #else
-    (void)url;
+    (void)payload;
+    (void)label_text;
+    (void)hint_text;
+    (void)hide_after_s;
 #endif
 }
 

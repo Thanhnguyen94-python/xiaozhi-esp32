@@ -19,6 +19,9 @@ public:
     void RegisterTools();
     std::pair<std::string, std::string> GetWebUiAccessInfo();
     void ShowWebUiAccessOnDisplay();
+    // Che do cau hinh Wi-Fi: QR de dien thoai quet la vao diem phat cua robot (giu toi khi an).
+    void ShowWifiSetupQrOnDisplay();
+    void HideQrOnDisplay() { HideWebUiQrOnDisplay(); }
 
 private:
     DualDcMotorController* wheel_motor_ = nullptr;
@@ -29,6 +32,8 @@ private:
     lv_obj_t* qr_popup_ = nullptr;
 
     void ShowWebUiQrOnDisplay(const std::string& url);
+    // hide_after_s = 0: khong tu an.
+    void ShowQrPopup(const std::string& payload, const char* label, const char* hint, int hide_after_s);
     void HideWebUiQrOnDisplay();
     static void QrHideTimerCallback(void* arg);
 
