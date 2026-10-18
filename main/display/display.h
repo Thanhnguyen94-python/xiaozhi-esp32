@@ -36,7 +36,9 @@ public:
     virtual void SetEmotion(const char* emotion);
     virtual void SetChatMessage(const char* role, const char* content);
     virtual void PinChatMessage(const char* content, int duration_ms = 20000);
+    // duration_ms <= 0: giữ QR tới khi gọi HideQRCode().
     virtual void ShowQRCode(const char* text, int duration_ms = 20000);
+    virtual void HideQRCode() {}
     virtual void ClearChatMessages();
     virtual void SetTheme(Theme* theme);
     virtual Theme* GetTheme() { return current_theme_; }

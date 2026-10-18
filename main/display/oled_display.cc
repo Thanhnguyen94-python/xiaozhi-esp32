@@ -3,6 +3,7 @@
 #include "lvgl_theme.h"
 #include "lvgl_font.h"
 #include "lvgl_port_manager.h"
+#include "qr/qr_render.h"
 #include <string>
 #include <algorithm>
 
@@ -110,6 +111,18 @@ void OledDisplay::SetupUI() {
 }
 
 OledDisplay::~OledDisplay() {
+    if (qr_hide_timer_ != nullptr) {
+        lv_timer_delete(qr_hide_timer_);
+        qr_hide_timer_ = nullptr;
+    }
+    if (qr_container_ != nullptr) {
+        lv_obj_del(qr_container_);
+        qr_container_ = nullptr;
+    }
+    if (qr_buf_ != nullptr) {
+        free(qr_buf_);
+        qr_buf_ = nullptr;
+    }
     if (content_ != nullptr) {
         lv_obj_del(content_);
     }
@@ -562,7 +575,87 @@ void OledDisplay::PinChatMessage(const char* content, int duration_ms) {
 }
 
 void OledDisplay::ShowQRCode(const char* text, int duration_ms) {
-    // Base OledDisplay không có QR support
-    (void)text;
-    (void)duration_ms;
+    if (role_ == OledRole::kTextOnly) return;
+    if (text == nullptr || text[0] == '\0') return;
+
+    // Sinh QR trước, ngoài lock để không giữ lock lâu
+    int w = 0, h = 0, size = 0;
+    uint8_t* buf = qr_render_generate(text, 128, 50, &w, &h, &size);
+    if (buf == nullptr) {
+        ESP_LOGE(TAG, "QR generate failed for: %s", text);
+        return;
+    }
+
+    DisplayLockGuard lock(this);
+
+    if (qr_container_ == nullptr) {
+        qr_container_ = lv_obj_create(lv_display_get_screen_active(display_));
+        lv_obj_set_size(qr_container_, 128, 64);
+        lv_obj_center(qr_container_);
+        lv_obj_set_style_bg_color(qr_container_, lv_color_white(), 0);
+        lv_obj_set_style_bg_opa(qr_container_, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(qr_container_, 0, 0);
+        lv_obj_set_style_radius(qr_container_, 0, 0);
+        lv_obj_set_style_pad_all(qr_container_, 0, 0);
+        lv_obj_remove_flag(qr_container_, LV_OBJ_FLAG_SCROLLABLE);
+        qr_image_ = lv_image_create(qr_container_);
+        // Dịch QR xuống dưới vạch chia vùng màu của OLED 2 màu (y = 15)
+        lv_obj_align(qr_image_, LV_ALIGN_TOP_MID, 0, 15);
+    }
+    lv_obj_remove_flag(qr_container_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(qr_container_);
+
+    qr_image_dsc_.header.magic = LV_IMAGE_HEADER_MAGIC;
+    qr_image_dsc_.header.cf = LV_COLOR_FORMAT_I1;
+    qr_image_dsc_.header.w = w;
+    qr_image_dsc_.header.h = h;
+    qr_image_dsc_.data_size = size;
+    qr_image_dsc_.data = buf;
+    lv_image_set_src(qr_image_, &qr_image_dsc_);
+
+    if (qr_buf_ != nullptr) {
+        free(qr_buf_);
+    }
+    qr_buf_ = buf;
+    OnQrVisibilityChanged(true);
+
+    // Timer LVGL chạy trong task LVGL (đã giữ lock) -> ẩn QR an toàn
+    if (qr_hide_timer_ != nullptr) {
+        lv_timer_delete(qr_hide_timer_);
+        qr_hide_timer_ = nullptr;
+    }
+    if (duration_ms > 0) {
+        qr_hide_timer_ = lv_timer_create(&OledDisplay::QrHideTimerCallback, duration_ms, this);
+        lv_timer_set_repeat_count(qr_hide_timer_, 1);
+        lv_timer_set_auto_delete(qr_hide_timer_, false);
+    }
+
+    ESP_LOGI(TAG, "Show QR: %s (%dx%d, %d ms)", text, w, h, duration_ms);
+}
+
+void OledDisplay::HideQRCode() {
+    DisplayLockGuard lock(this);
+    HideQrLocked();
+}
+
+void OledDisplay::QrHideTimerCallback(lv_timer_t* timer) {
+    auto* self = static_cast<OledDisplay*>(lv_timer_get_user_data(timer));
+    if (self != nullptr) {
+        self->HideQrLocked();
+    }
+}
+
+void OledDisplay::HideQrLocked() {
+    if (qr_hide_timer_ != nullptr) {
+        lv_timer_delete(qr_hide_timer_);
+        qr_hide_timer_ = nullptr;
+    }
+    if (!IsQrVisible()) return;
+
+    if (qr_container_ != nullptr) {
+        lv_obj_add_flag(qr_container_, LV_OBJ_FLAG_HIDDEN);
+    }
+    free(qr_buf_);
+    qr_buf_ = nullptr;
+    OnQrVisibilityChanged(false);
 }

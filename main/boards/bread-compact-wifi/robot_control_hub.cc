@@ -25,46 +25,14 @@ RobotControlHub::RobotControlHub(DualDcMotorController* wheel_motor, DualServoCo
         ESP_LOGW(TAG, "Khong tao duoc timer stop: %s", esp_err_to_name(err));
         voice_motion_stop_timer_ = nullptr;
     }
-
-    esp_timer_create_args_t qr_timer_args = {
-        .callback = &RobotControlHub::QrHideTimerCallback,
-        .arg = this,
-        .dispatch_method = ESP_TIMER_TASK,
-        .name = "webui_qr_hide",
-        .skip_unhandled_events = true,
-    };
-
-    err = esp_timer_create(&qr_timer_args, &qr_hide_timer_);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Khong tao duoc timer hide qr: %s", esp_err_to_name(err));
-        qr_hide_timer_ = nullptr;
-    }
 }
 
 RobotControlHub::~RobotControlHub() {
-    if (qr_hide_timer_ != nullptr) {
-        esp_timer_stop(qr_hide_timer_);
-        esp_timer_delete(qr_hide_timer_);
-        qr_hide_timer_ = nullptr;
-    }
-
     if (voice_motion_stop_timer_ != nullptr) {
         esp_timer_stop(voice_motion_stop_timer_);
         esp_timer_delete(voice_motion_stop_timer_);
         voice_motion_stop_timer_ = nullptr;
     }
-}
-
-void RobotControlHub::QrHideTimerCallback(void* arg) {
-    auto* self = static_cast<RobotControlHub*>(arg);
-    if (self == nullptr) {
-        return;
-    }
-
-    auto& app = Application::GetInstance();
-    app.Schedule([self]() {
-        self->HideWebUiQrOnDisplay();
-    });
 }
 
 void RobotControlHub::VoiceMotionStopTimerCallback(void* arg) {
@@ -120,27 +88,22 @@ std::pair<std::string, std::string> RobotControlHub::GetWebUiAccessInfo() {
     return {url, hint};
 }
 
-void RobotControlHub::HideWebUiQrOnDisplay() {
-#if CONFIG_LV_USE_QRCODE
-    if (display_ == nullptr) {
-        return;
+void RobotControlHub::HideQrOnDisplay() {
+    if (display_ != nullptr) {
+        display_->HideQRCode();
     }
-
-    DisplayLockGuard guard(display_);
-    if (qr_popup_ != nullptr) {
-        lv_obj_del(qr_popup_);
-        qr_popup_ = nullptr;
-    }
-#endif
 }
 
 void RobotControlHub::ShowWebUiQrOnDisplay(const std::string& url) {
-    ShowQrPopup(url, "Scan QR\nWebUI", "10s", 10);
+    // QR do Display ve (chi QR, khong chu): tu an sau kWebUiQrDurationMs.
+    if (display_ != nullptr) {
+        display_->ShowQRCode(url.c_str(), kWebUiQrDurationMs);
+    }
 }
 
 void RobotControlHub::ShowWifiSetupQrOnDisplay() {
     std::string ssid = WifiManager::GetInstance().GetApSsid();
-    if (ssid.empty()) {
+    if (ssid.empty() || display_ == nullptr) {
         return;
     }
     // Chuan QR Wi-Fi: dien thoai quet bang camera la vao diem phat (mang mo, khong mat khau),
@@ -152,77 +115,8 @@ void RobotControlHub::ShowWifiSetupQrOnDisplay() {
         }
         escaped += c;
     }
-    ShowQrPopup("WIFI:T:nopass;S:" + escaped + ";;", "Quet QR\nde cai\nWi-Fi", nullptr, 0);
-}
-
-void RobotControlHub::ShowQrPopup(const std::string& payload, const char* label_text, const char* hint_text,
-                                  int hide_after_s) {
-#if CONFIG_LV_USE_QRCODE
-    if (display_ == nullptr || payload.empty()) {
-        return;
-    }
-
-    DisplayLockGuard guard(display_);
-
-    auto* screen = lv_screen_active();
-    if (screen == nullptr) {
-        return;
-    }
-
-    if (qr_popup_ != nullptr) {
-        lv_obj_del(qr_popup_);
-        qr_popup_ = nullptr;
-    }
-
-    qr_popup_ = lv_obj_create(screen);
-    lv_obj_set_size(qr_popup_, 128, 64);
-    lv_obj_center(qr_popup_);
-    lv_obj_set_style_border_width(qr_popup_, 1, 0);
-    lv_obj_set_style_border_color(qr_popup_, lv_color_black(), 0);
-    lv_obj_set_style_bg_color(qr_popup_, lv_color_white(), 0);
-    lv_obj_set_style_bg_opa(qr_popup_, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(qr_popup_, 0, 0);
-    lv_obj_set_style_pad_all(qr_popup_, 0, 0);
-
-    auto* qr = lv_qrcode_create(qr_popup_);
-    lv_qrcode_set_size(qr, 62);
-    lv_qrcode_set_dark_color(qr, lv_color_black());
-    lv_qrcode_set_light_color(qr, lv_color_white());
-    lv_qrcode_set_quiet_zone(qr, true);
-
-    if (lv_qrcode_update(qr, payload.c_str(), static_cast<uint32_t>(payload.size())) != LV_RESULT_OK) {
-        lv_obj_del(qr_popup_);
-        qr_popup_ = nullptr;
-        ESP_LOGW(TAG, "Khong tao duoc QR cho: %s", payload.c_str());
-        return;
-    }
-
-    lv_obj_align(qr, LV_ALIGN_LEFT_MID, 2, 0);
-
-    auto* label = lv_label_create(qr_popup_);
-    lv_label_set_text(label, label_text);
-    lv_obj_set_style_text_color(label, lv_color_black(), 0);
-    lv_obj_align(label, LV_ALIGN_RIGHT_MID, -4, hint_text != nullptr ? -8 : 0);
-
-    if (hint_text != nullptr) {
-        auto* hint = lv_label_create(qr_popup_);
-        lv_label_set_text(hint, hint_text);
-        lv_obj_set_style_text_color(hint, lv_color_black(), 0);
-        lv_obj_align(hint, LV_ALIGN_RIGHT_MID, -8, 18);
-    }
-
-    if (qr_hide_timer_ != nullptr) {
-        esp_timer_stop(qr_hide_timer_);
-        if (hide_after_s > 0) {
-            esp_timer_start_once(qr_hide_timer_, static_cast<uint64_t>(hide_after_s) * 1000ULL * 1000ULL);
-        }
-    }
-#else
-    (void)payload;
-    (void)label_text;
-    (void)hint_text;
-    (void)hide_after_s;
-#endif
+    std::string payload = "WIFI:T:nopass;S:" + escaped + ";;";
+    display_->ShowQRCode(payload.c_str(), 0);  // giu toi khi HideQrOnDisplay()
 }
 
 void RobotControlHub::ShowWebUiAccessOnDisplay() {

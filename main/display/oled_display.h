@@ -40,6 +40,19 @@ protected:
     bool chat_pinned_ = false;
     int64_t chat_pin_until_us_ = 0;
 
+    // QR full màn (128x64, QR dịch xuống dưới vạch chia của OLED 2 màu)
+    lv_obj_t* qr_container_ = nullptr;
+    lv_obj_t* qr_image_ = nullptr;
+    lv_image_dsc_t qr_image_dsc_{};
+    uint8_t* qr_buf_ = nullptr;
+    lv_timer_t* qr_hide_timer_ = nullptr;
+
+    bool IsQrVisible() const { return qr_buf_ != nullptr; }
+    // Gọi khi đang giữ lock LVGL. Subclass override để ẩn/hiện layout riêng.
+    virtual void OnQrVisibilityChanged(bool visible) { (void)visible; }
+    void HideQrLocked();
+    static void QrHideTimerCallback(lv_timer_t* timer);
+
     virtual bool Lock(int timeout_ms = 0) override;
     virtual void Unlock() override;
 
@@ -61,6 +74,7 @@ public:
     virtual void SetChatMessage(const char* role, const char* content) override;
     virtual void PinChatMessage(const char* content, int duration_ms = 20000) override;
     virtual void ShowQRCode(const char* text, int duration_ms = 20000) override;
+    virtual void HideQRCode() override;
     virtual void SetEmotion(const char* emotion) override;
     virtual void SetTheme(Theme* theme) override;
     virtual void SetStatus(const char* status) override;

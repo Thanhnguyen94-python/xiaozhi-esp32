@@ -104,3 +104,7 @@ void DualOledDisplay::SetPowerSaveMode(bool on) {
 void DualOledDisplay::ShowQRCode(const char* text, int duration_ms) {
     if (face_) face_->ShowQRCode(text, duration_ms);
 }
+
+void DualOledDisplay::HideQRCode() {
+    if (face_) face_->HideQRCode();
+}

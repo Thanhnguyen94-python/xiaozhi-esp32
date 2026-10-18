@@ -25,7 +25,8 @@ public:
     virtual void SetEmotion(const char* emotion) override;                      // → face_
     virtual void SetChatMessage(const char* role, const char* content) override;  // → text_
     virtual void PinChatMessage(const char* content, int duration_ms = 20000) override;
-    virtual void ShowQRCode(const char* text, int duration_ms = 20000) override;
+    virtual void ShowQRCode(const char* text, int duration_ms = 20000) override;   // → face_
+    virtual void HideQRCode() override;                                         // → face_
     virtual void ClearChatMessages() override;                                  // → cả 2
     virtual void SetTheme(Theme* theme) override;                               // → cả 2
     virtual Theme* GetTheme() override;                                         // → face_

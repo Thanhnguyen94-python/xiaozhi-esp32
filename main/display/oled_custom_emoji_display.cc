@@ -8,7 +8,6 @@
 #include <esp_log.h>
 #include <font_awesome.h>
 #include "assets/lang_config.h"
-#include "qr/qr_render.h"
 
 LV_FONT_DECLARE(font_awesome_20_4);
 
@@ -610,11 +609,8 @@ void OledCustomEmojiDisplay::AnimateFaceTick() {
     bool need_render = false;
     ++frame_count_;
 
-    // Nếu đang hiện QR → check timeout, không animate face
-    if (qr_hide_tick_ != 0) {
-        if (frame_count_ >= qr_hide_tick_) {
-            HideQR();
-        }
+    // Đang hiện QR → không animate face (OledDisplay tự ẩn QR khi hết giờ)
+    if (IsQrVisible()) {
         return;
     }
 
@@ -1249,65 +1245,11 @@ void OledCustomEmojiDisplay::SetChatMessage(const char* role, const char* conten
     OledDisplay::SetChatMessage(role, content);
 }
 
-void OledCustomEmojiDisplay::ShowQRCode(const char* text, int duration_ms) {
-    if (!IsFaceMode() || face_root_ == nullptr) return;
-    if (text == nullptr || text[0] == '\0') return;
-
-    // Sinh QR trước, ngoài lock để không giữ lock lâu
-    int w = 0, h = 0, size = 0;
-    uint8_t* buf = qr_render_generate(text, 128, 50, &w, &h, &size);
-    if (buf == nullptr) {
-        ESP_LOGE(TAG, "QR generate failed for: %s", text);
-        return;
+void OledCustomEmojiDisplay::OnQrVisibilityChanged(bool visible) {
+    if (face_root_ == nullptr) return;
+    if (visible) {
+        lv_obj_add_flag(face_root_, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_remove_flag(face_root_, LV_OBJ_FLAG_HIDDEN);
     }
-
-    DisplayLockGuard lock(this);
-
-    // Ẩn face
-    lv_obj_add_flag(face_root_, LV_OBJ_FLAG_HIDDEN);
-
-    // Tạo container + image lần đầu
-    if (qr_container_ == nullptr) {
-        qr_container_ = lv_obj_create(lv_display_get_screen_active(display_));
-        lv_obj_set_size(qr_container_, 128, 64);
-        lv_obj_center(qr_container_);
-        lv_obj_set_style_bg_color(qr_container_, lv_color_white(), 0);
-        lv_obj_set_style_border_width(qr_container_, 0, 0);
-        lv_obj_set_style_pad_all(qr_container_, 0, 0);
-        qr_image_ = lv_image_create(qr_container_);
-        // ⬇️ Dịch QR xuống dưới: align top với offset y = 10 (tuỳ chỉnh)
-        lv_obj_align(qr_image_, LV_ALIGN_TOP_MID, 0, 15);
-    }
-    lv_obj_clear_flag(qr_container_, LV_OBJ_FLAG_HIDDEN);
-
-    // Cập nhật image descriptor
-    qr_image_dsc_.header.magic = LV_IMAGE_HEADER_MAGIC;
-    qr_image_dsc_.header.cf = LV_COLOR_FORMAT_I1;
-    qr_image_dsc_.header.w = w;
-    qr_image_dsc_.header.h = h;
-    qr_image_dsc_.data_size = size;
-    qr_image_dsc_.data = buf;
-    lv_image_set_src(qr_image_, &qr_image_dsc_);
-
-    // Free buffer cũ nếu có
-    if (qr_buf_ != nullptr) {
-        free(qr_buf_);
-    }
-    qr_buf_ = buf;
-
-    // Hẹn giờ ẩn: dùng frame_count_ (mỗi tick = 80ms)
-    qr_hide_tick_ = frame_count_ + (uint32_t)(duration_ms / 80);
-
-    ESP_LOGI(TAG, "Show QR: %s (%dx%d, %d ms)", text, w, h, duration_ms);
-}
-
-void OledCustomEmojiDisplay::HideQR() {
-    // Hàm này chạy trong LVGL task (đã có lock)
-    if (qr_container_) lv_obj_add_flag(qr_container_, LV_OBJ_FLAG_HIDDEN);
-    if (face_root_)    lv_obj_clear_flag(face_root_, LV_OBJ_FLAG_HIDDEN);
-    if (qr_buf_ != nullptr) {
-        free(qr_buf_);
-        qr_buf_ = nullptr;
-    }
-    qr_hide_tick_ = 0;
 }
