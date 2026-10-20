@@ -13,5 +13,5 @@ endif()
 # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
 idf_build_set_property(MINIMAL_BUILD ON)
 
-set(PROJECT_VER "2.3.3")
+set(PROJECT_VER "2.3.5")
 project(xiaozhi)

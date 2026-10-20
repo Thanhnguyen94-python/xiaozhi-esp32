@@ -190,6 +190,13 @@ constexpr const char* kWebUiHtml = R"HTML(
     .sns-chip b { font-size:15px; }
     .sns-chip.on { border-color:var(--danger); } .sns-chip.on b { color:var(--danger); }
     .sns-chip.ok b { color:var(--ok); } .sns-chip.off b { color:var(--text-faint); }
+    .sns-cal { border:1px solid var(--border); border-radius:10px; padding:8px 10px; background:var(--surface-2); margin-bottom:14px; }
+    .cal-row { display:flex; justify-content:space-between; gap:8px; padding:3px 0; font-size:13px; }
+    .cal-k { color:var(--text-dim); } .cal-v { font-weight:600; font-variant-numeric:tabular-nums; text-align:right; }
+    .cal-bar { position:relative; height:10px; border-radius:5px; background:var(--border); margin:4px 0 6px; overflow:hidden; }
+    .cal-fill { position:absolute; left:0; top:0; bottom:0; width:0; background:var(--ok); transition:width .15s; }
+    .cal-fill.bad { background:var(--danger); }
+    .cal-thr { position:absolute; top:-2px; bottom:-2px; width:2px; background:var(--text); }
     .fw-bar { height:8px; border-radius:99px; background:var(--surface-2); border:1px solid var(--border); overflow:hidden; margin-top:8px; }
     .fw-bar > div { height:100%; width:0; background:var(--accent); transition:width .2s; }
     .sw { flex:1; display:flex; align-items:center; gap:10px; cursor:pointer; font-size:14px; }
@@ -566,10 +573,28 @@ constexpr const char* kWebUiHtml = R"HTML(
       <div class="hint hidden" id="hint-sns-main">Khi cảm biến phát hiện vật cản hoặc mép bàn, robot dừng bánh và không nhận lệnh đi tiếp về hướng đó (từ web, giọng nói, macro, "có sự sống" và cả tay cầm RC). Đi theo hướng ngược lại hoặc quay tại chỗ vẫn được. Đổi chân và lưu là áp dụng ngay, không cần khởi động lại.</div>
 
       <div class="sec-title">Trạng thái trực tiếp</div>
-      <div class="sns-live">
+      <div class="sns-live" style="grid-template-columns:repeat(2,1fr)">
         <div class="sns-chip off" id="snsLiveFront"><span>Phía trước</span><b>—</b></div>
         <div class="sns-chip off" id="snsLiveBack"><span>Phía sau</span><b>—</b></div>
-        <div class="sns-chip off" id="snsLiveTof"><span>Khoảng cách ToF</span><b>—</b></div>
+        <div class="sns-chip off" id="snsLiveTof"><span>ToF 1</span><b>—</b></div>
+        <div class="sns-chip off" id="snsLiveTof2"><span>ToF 2</span><b>—</b></div>
+      </div>
+
+      <div class="sec-title" style="display:flex;align-items:center;gap:8px">Số đo hiệu chỉnh <button class="help" data-hint="hint-sns-cal">?</button></div>
+      <div class="hint hidden" id="hint-sns-cal">Số đo cập nhật trực tiếp (khoảng 2 lần/giây) để chỉnh cảm biến. <b>LM393</b>: vặn biến trở trên module cho đến khi "Mức chân" đổi đúng lúc có vật ở khoảng cách mong muốn. <b>ToF</b>: đặt robot ở vị trí bình thường (trên bàn / trước vật), xem số đo và min–max, rồi đặt ngưỡng cách số đo đó 20–30 mm. Bấm "Đặt lại min/max" trước mỗi lần thử.</div>
+      <div class="sns-cal">
+        <div class="cal-row" id="calFront"><span class="cal-k">LM393 trước</span><span class="cal-v">—</span></div>
+        <div class="cal-row" id="calBack"><span class="cal-k">LM393 sau</span><span class="cal-v">—</span></div>
+        <div class="cal-row" id="calTof"><span class="cal-k">ToF 1</span><span class="cal-v">—</span></div>
+        <div class="cal-bar hidden" id="calTofBarWrap"><div class="cal-fill" id="calTofFill"></div><div class="cal-thr" id="calTofThr"></div></div>
+        <div class="cal-row" id="calTofMinMax"><span class="cal-k">ToF 1 min – max</span><span class="cal-v">—</span></div>
+        <div class="cal-row" id="calTofChip"><span class="cal-k">Chip ToF 1</span><span class="cal-v">—</span></div>
+        <div class="sep" style="margin:6px 0"></div>
+        <div class="cal-row" id="calTof2"><span class="cal-k">ToF 2</span><span class="cal-v">—</span></div>
+        <div class="cal-bar hidden" id="calTof2BarWrap"><div class="cal-fill" id="calTof2Fill"></div><div class="cal-thr" id="calTof2Thr"></div></div>
+        <div class="cal-row" id="calTof2MinMax"><span class="cal-k">ToF 2 min – max</span><span class="cal-v">—</span></div>
+        <div class="cal-row" id="calTof2Chip"><span class="cal-k">Chip ToF 2</span><span class="cal-v">—</span></div>
+        <button class="btn" id="btnCalReset" style="margin-top:6px">↺ Đặt lại min/max</button>
       </div>
 
       <div class="grid" style="gap:18px">
@@ -589,25 +614,42 @@ constexpr const char* kWebUiHtml = R"HTML(
         </div>
 
         <div>
-          <div class="sec-title">Cảm biến khoảng cách ToF (VL6180X / TOF050C)</div>
-          <div class="sw-row"><label class="sw"><input type="checkbox" id="snsTofEn"> Bật cảm biến ToF</label><button class="help" data-hint="hint-sns-tof">?</button></div>
+          <div class="sec-title">ToF 1 — SDA41/SCL42, chung OLED chính (VL6180X / VL53L0X)</div>
+          <div class="sw-row"><label class="sw"><input type="checkbox" id="snsTofEn"> Bật ToF 1</label><button class="help" data-hint="hint-sns-tof">?</button></div>
           <div class="two">
+            <div><span class="muted">Vị trí lắp</span><select class="input" id="snsTofPos"><option value="0" selected>Phía trước</option><option value="1">Phía sau</option></select></div>
             <div><span class="muted">Cách gắn</span><select class="input" id="snsTofMode"><option value="0">Nhìn thẳng: chặn vật cản</option><option value="1">Chúc xuống: chống rơi mép bàn</option></select></div>
-            <div><span class="muted">Ngưỡng (mm, 10–200)</span><input type="number" class="input" id="snsTofMm" min="10" max="200" inputmode="numeric"></div>
           </div>
-          <div class="hint hidden" id="hint-sns-tof" style="margin-top:8px">Nối SDA→GPIO41, SCL→GPIO42 (chung với OLED chính), VCC 3.3V, GND. Tầm đo thực tế khoảng 10–20 cm.<br>• <b>Nhìn thẳng</b>: dừng khi vật gần hơn ngưỡng.<br>• <b>Chúc xuống</b>: gắn ở mũi robot, nhìn xuống mặt bàn; xem số đo trực tiếp khi đặt trên bàn (vd 30 mm) rồi đặt ngưỡng lớn hơn khoảng 20–30 mm. Khi mũi robot ra khỏi mép bàn, số đo vọt lên hoặc mất → robot dừng.<br>Nếu bật mà không đọc được cảm biến, robot sẽ chặn đi tiến cho an toàn.</div>
+          <div class="two" style="margin-top:8px">
+            <div><span class="muted" id="snsTofMmLbl">Ngưỡng (mm, 10–1000)</span><input type="number" class="input" id="snsTofMm" min="10" max="1000" inputmode="numeric"></div>
+            <div class="muted hidden" id="snsTofNoBus" style="align-self:end;color:var(--danger)">Firmware này không có bus I2C cho ToF 1</div>
+          </div>
         </div>
+        <div>
+          <div class="sec-title">ToF 2 — SDA21/SCL38, chung OLED phụ (VL6180X / VL53L0X)</div>
+          <div class="sw-row"><label class="sw"><input type="checkbox" id="snsTof2En"> Bật ToF 2</label><button class="help" data-hint="hint-sns-tof">?</button></div>
+          <div class="two">
+            <div><span class="muted">Vị trí lắp</span><select class="input" id="snsTof2Pos"><option value="0">Phía trước</option><option value="1" selected>Phía sau</option></select></div>
+            <div><span class="muted">Cách gắn</span><select class="input" id="snsTof2Mode"><option value="0">Nhìn thẳng: chặn vật cản</option><option value="1">Chúc xuống: chống rơi mép bàn</option></select></div>
+          </div>
+          <div class="two" style="margin-top:8px">
+            <div><span class="muted" id="snsTof2MmLbl">Ngưỡng (mm, 10–1000)</span><input type="number" class="input" id="snsTof2Mm" min="10" max="1000" inputmode="numeric"></div>
+            <div class="muted hidden" id="snsTof2NoBus" style="align-self:end;color:var(--danger)">Firmware này không có bus I2C cho ToF 2</div>
+          </div>
+        </div>
+        <div class="hint hidden" id="hint-sns-tof">VL6180X và VL53L0X đều có địa chỉ cố định <b>0x29</b>, nên mỗi bus I2C chỉ gắn được <b>1</b> con: <b>ToF 1</b> nối SDA→GPIO41, SCL→GPIO42 (chung với OLED chính); <b>ToF 2</b> nối SDA→GPIO21, SCL→GPIO38 (chung với OLED phụ 0.91"; không lắp màn phụ vẫn dùng được). VCC 3.3V, GND chung. Mỗi con chọn tự do vị trí (có thể cả 2 cùng phía, ví dụ 1 con nhìn thẳng + 1 con chúc xuống). Tự nhận loại chip: <b>VL6180X</b> (TOF050C, đo ~10–200 mm) hoặc <b>VL53L0X</b> (TOF200C/GY-530, đo ~30–1200 mm).<br>• <b>Nhìn thẳng</b>: dừng khi vật gần hơn ngưỡng.<br>• <b>Chúc xuống</b>: nhìn xuống mặt bàn; xem số đo trực tiếp khi đặt trên bàn (vd 30 mm) rồi đặt ngưỡng lớn hơn khoảng 20–30 mm. Khi ra khỏi mép bàn, số đo vọt lên hoặc mất → robot dừng.<br>Nếu bật mà không đọc được cảm biến, robot sẽ chặn hướng đã chọn ở "Vị trí lắp" cho an toàn.</div>
 
         <div>
           <div class="sec-title">Phản ứng</div>
           <div class="two">
-            <div><span class="muted">Khi phát hiện lúc đang chạy</span><select class="input" id="snsAction"><option value="1">Dừng + lùi nhẹ</option><option value="0">Chỉ dừng</option></select></div>
-            <div><span class="muted">Lùi trong (ms, 100–1000)</span><input type="number" class="input" id="snsBackoffMs" min="100" max="1000" step="50" inputmode="numeric"></div>
+            <div><span class="muted">Khi phát hiện lúc đang chạy</span><select class="input" id="snsAction"><option value="1">Dừng + chạy ngược ra xa</option><option value="0">Chỉ dừng</option></select></div>
+            <div><span class="muted">Chạy ngược trong (ms, 100–1000)</span><input type="number" class="input" id="snsBackoffMs" min="100" max="1000" step="50" inputmode="numeric"></div>
           </div>
           <div class="two" style="margin-top:8px">
-            <div><span class="muted">Tốc độ lùi (30–100)</span><input type="number" class="input" id="snsBackoffSpeed" min="30" max="100" step="5" inputmode="numeric"></div>
+            <div><span class="muted">Tốc độ chạy ngược (30–100)</span><input type="number" class="input" id="snsBackoffSpeed" min="30" max="100" step="5" inputmode="numeric"></div>
             <div></div>
           </div>
+          <div class="hint" style="margin-top:8px">Phía trước bị chặn → robot dừng rồi <b>lùi</b> nhẹ; phía sau bị chặn → dừng rồi <b>tiến</b> nhẹ. Nếu phía sắp chạy tới cũng đang bị chặn thì chỉ dừng.</div>
           <div class="sw-row" style="margin-top:8px"><label class="sw"><input type="checkbox" id="snsFace"> Đổi mặt "giật mình" khi va chạm</label></div>
           <div class="sw-row" id="snsRcRow"><label class="sw"><input type="checkbox" id="snsRcBypass"> ⚠️ Cho tay cầm RC vượt qua cảm biến</label><button class="help" data-hint="hint-sns-rc">?</button></div>
           <div class="hint warn hidden" id="hint-sns-rc">Khi bật, lúc bạn đang lái bằng tay cầm RC robot sẽ không bị cảm biến chặn (bạn tự chịu trách nhiệm quan sát). Các nguồn lệnh khác vẫn bị chặn.</div>
@@ -884,18 +926,21 @@ constexpr const char* kWebUiHtml = R"HTML(
     const t = new Date().toLocaleTimeString();
     const div = document.createElement('div');
     div.className = 'msg ' + (who === 'user' ? 'user' : 'robot');
-    const label = who === 'user' ? '👤 Bạn' : '🤖 Robot';
+    if (who === 'system') div.style.opacity = '.6';
+    const label = who === 'user' ? '👤 Bạn' : who === 'system' ? 'ℹ️' : '🤖 Robot';
     div.innerHTML = `<div class="meta"><b>${label}</b> · ${t}</div><div>${escapeHtml(text)}</div>`;
     box.appendChild(div);
     while (box.children.length > 200) box.removeChild(box.firstChild);
     box.scrollTop = box.scrollHeight;
   }
+  let lastChatSent = null;
   function sendChat(textOverride) {
     const input = $('chatInput');
     const text = (textOverride != null ? textOverride : input.value).trim();
     if (!text) return;
     if (!wsOpen()) { addChatMsg('robot', '(Chưa kết nối WebSocket)'); return; }
     addChatMsg('user', text);
+    lastChatSent = text;
     ws.send(JSON.stringify({ type: 'chat', text: text }));
     if (textOverride == null) input.value = '';
   }
@@ -1037,12 +1082,16 @@ constexpr const char* kWebUiHtml = R"HTML(
   }
 
   // ===== Cảm biến an toàn =====
-  const SNS_NUM = { sns_tof_mm: 'snsTofMm', sns_backoff_ms: 'snsBackoffMs', sns_backoff_speed: 'snsBackoffSpeed' };
+  // 2 ToF: slot 0 = khóa "sns_tof_*" / id "snsTof*", slot 1 = "sns_tof2_*" / "snsTof2*".
+  const TOFS = [{ k: 'sns_tof_', id: 'snsTof', cal: 'calTof', live: 'snsLiveTof' },
+                { k: 'sns_tof2_', id: 'snsTof2', cal: 'calTof2', live: 'snsLiveTof2' }];
+  const SNS_NUM = { sns_tof_mm: 'snsTofMm', sns_tof2_mm: 'snsTof2Mm', sns_backoff_ms: 'snsBackoffMs', sns_backoff_speed: 'snsBackoffSpeed' };
   const SNS_SEL = { sns_front_gpio: 'snsFrontGpio', sns_front_low: 'snsFrontLow', sns_back_gpio: 'snsBackGpio',
-                    sns_back_low: 'snsBackLow', sns_tof_mode: 'snsTofMode', sns_action: 'snsAction' };
-  const SNS_CHK = { sns_front_en: 'snsFrontEn', sns_back_en: 'snsBackEn', sns_tof_en: 'snsTofEn',
+                    sns_back_low: 'snsBackLow', sns_tof_mode: 'snsTofMode', sns_tof_pos: 'snsTofPos',
+                    sns_tof2_mode: 'snsTof2Mode', sns_tof2_pos: 'snsTof2Pos', sns_action: 'snsAction' };
+  const SNS_CHK = { sns_front_en: 'snsFrontEn', sns_back_en: 'snsBackEn', sns_tof_en: 'snsTofEn', sns_tof2_en: 'snsTof2En',
                     sns_rc_bypass: 'snsRcBypass', sns_react_face: 'snsFace' };
-  const SNS_LABEL = { snsTofMm: 'Ngưỡng ToF', snsBackoffMs: 'Thời gian lùi', snsBackoffSpeed: 'Tốc độ lùi' };
+  const SNS_LABEL = { snsTofMm: 'Ngưỡng ToF 1', snsTof2Mm: 'Ngưỡng ToF 2', snsBackoffMs: 'Thời gian chạy ngược', snsBackoffSpeed: 'Tốc độ chạy ngược' };
 
   function loadSensors(s) {
     const ok = !!s && s.sns_tof_mm !== undefined;
@@ -1053,9 +1102,10 @@ constexpr const char* kWebUiHtml = R"HTML(
     for (const id of ['snsFrontGpio', 'snsBackGpio']) {
       $(id).innerHTML = pins.map(g => `<option value="${g}">GPIO${g}</option>`).join('');
     }
-    for (const k in SNS_NUM) $(SNS_NUM[k]).value = s[k];
-    for (const k in SNS_SEL) $(SNS_SEL[k]).value = String(s[k]);
-    for (const k in SNS_CHK) $(SNS_CHK[k]).checked = !!s[k];
+    for (const k in SNS_NUM) if (s[k] !== undefined) $(SNS_NUM[k]).value = s[k];
+    for (const k in SNS_SEL) if (s[k] !== undefined) $(SNS_SEL[k]).value = String(s[k]);
+    for (const t of TOFS) $(t.id + 'NoBus').classList.toggle('hidden', s[t.k + 'bus'] !== 0);
+    for (const k in SNS_CHK) if (s[k] !== undefined) $(SNS_CHK[k]).checked = !!s[k];
   }
   function sensorPayload() {
     const p = {};
@@ -1093,20 +1143,81 @@ constexpr const char* kWebUiHtml = R"HTML(
     el.classList.add(cls);
     el.querySelector('b').textContent = text;
   }
+  const TOF_CHIP = ['—', 'VL6180X', 'VL53L0X', 'VL53L1X'];
+  const TOF_ERR = {
+    1: 'Không có thiết bị ở 0x29 (kiểm tra dây SDA/SCL, nguồn)',
+    2: 'Có thiết bị ở 0x29 nhưng không phải VL6180X/VL53L0X',
+    3: 'Chip này chưa được hỗ trợ',
+    4: 'Khởi tạo chip thất bại',
+    5: 'Mất kết nối khi đang đọc',
+  };
+  const calTof = [{ min: null, max: null }, { min: null, max: null }];
+  function setCal(id, text, cls) {
+    const v = $(id).querySelector('.cal-v');
+    v.textContent = text;
+    v.style.color = cls === 'on' ? 'var(--danger)' : cls === 'ok' ? 'var(--ok)' : '';
+  }
+  function calPin(id, en, raw, low, hit) {
+    if (!en || typeof raw !== 'number' || raw < 0) { setCal(id, 'Tắt', ''); return; }
+    const active = low ? raw === 0 : raw === 1;
+    setCal(id, `Mức chân ${raw ? 'HIGH (1)' : 'LOW (0)'} → ${active ? 'CÓ VẬT' : 'không có vật'}${hit ? ' ⛔' : ''}`, active ? 'on' : 'ok');
+  }
+  function tofEnabledOn(back) {
+    return TOFS.some(t => $(t.id + 'En').checked && ($(t.id + 'Pos').value === '1') === back);
+  }
+  function renderTof(t, i, m) {
+    const g = f => m[t.k + f];
+    if (g('ok') === undefined) return;  // firmware cũ không có ToF này
+    const en = $(t.id + 'En').checked;
+    const mm = g('mm_now'), blk = !!g('blk'), maxMm = g('max') || 0;
+    const chip = TOF_CHIP[g('chip')] || '—';
+    if (!en) setChip(t.live, 'off', 'Tắt');
+    else if (!g('ok')) setChip(t.live, 'on', 'Không thấy');
+    else setChip(t.live, blk ? 'on' : 'ok', mm < 0 ? 'Xa / trống' : `${mm} mm`);
+
+    const thr = Number($(t.id + 'Mm').value) || 0;
+    $(t.id + 'MmLbl').textContent = maxMm ? `Ngưỡng (mm; ${chip} đo tối đa ~${maxMm})` : 'Ngưỡng (mm, 10–1000)';
+    $(t.cal + 'BarWrap').classList.toggle('hidden', !(en && g('ok') && maxMm > 0));
+    const c = calTof[i];
+    if (!en) {
+      setCal(t.cal, 'Tắt', '');
+      setCal(t.cal + 'Chip', '—', '');
+    } else if (!g('ok')) {
+      setCal(t.cal, 'Không đọc được', 'on');
+      const err = TOF_ERR[g('err')] || 'Đang tìm cảm biến…';
+      const id = g('err') === 2 ? ` (ID đọc được 0x${(g('id') || 0).toString(16).toUpperCase().padStart(2, '0')})` : '';
+      setCal(t.cal + 'Chip', (g('chip') ? chip + ': ' : '') + err + id, 'on');
+    } else {
+      const back = $(t.id + 'Pos').value === '1';
+      const mode = $(t.id + 'Mode').value === '1' ? 'mép bàn: chặn khi > ngưỡng' : 'vật cản: chặn khi < ngưỡng';
+      setCal(t.cal, `${mm < 0 ? 'Xa / trống' : mm + ' mm'} · ngưỡng ${thr} mm → ${blk ? 'CHẶN ⛔' : 'thông ✅'}`, blk ? 'on' : 'ok');
+      setCal(t.cal + 'Chip', `${chip} · gắn phía ${back ? 'sau' : 'trước'} · ${mode}`, 'ok');
+      if (mm >= 0) {
+        c.min = c.min === null ? mm : Math.min(c.min, mm);
+        c.max = c.max === null ? mm : Math.max(c.max, mm);
+      }
+      const pct = v => Math.max(0, Math.min(100, v / maxMm * 100));
+      const fill = $(t.cal + 'Fill');
+      fill.style.width = (mm < 0 ? 100 : pct(mm)) + '%';
+      fill.classList.toggle('bad', blk);
+      $(t.cal + 'Thr').style.left = pct(thr) + '%';
+    }
+    setCal(t.cal + 'MinMax', c.min === null ? '—' : `${c.min} – ${c.max} mm`, '');
+  }
   function renderSensors(m) {
     if (typeof m.sns_front !== 'number') return;
-    const tofEn = $('snsTofEn').checked;
     const side = (on, blocked, hit) => {
       if (!on) return ['off', 'Tắt'];
       return blocked ? ['on', hit ? '⛔ Va chạm' : '⛔ Bị chặn'] : ['ok', '✅ Thông'];
     };
-    const f = side($('snsFrontEn').checked || tofEn, !!m.sns_front, !!m.sns_front_hit);
+    const f = side($('snsFrontEn').checked || tofEnabledOn(false), !!m.sns_front, !!m.sns_front_hit);
     setChip('snsLiveFront', f[0], f[1]);
-    const b = side($('snsBackEn').checked, !!m.sns_back, !!m.sns_back_hit);
+    const b = side($('snsBackEn').checked || tofEnabledOn(true), !!m.sns_back, !!m.sns_back_hit);
     setChip('snsLiveBack', b[0], b[1]);
-    if (!tofEn) setChip('snsLiveTof', 'off', 'Tắt');
-    else if (!m.sns_tof_ok) setChip('snsLiveTof', 'on', 'Không thấy');
-    else setChip('snsLiveTof', 'ok', m.sns_tof_mm_now < 0 ? 'Xa / trống' : `${m.sns_tof_mm_now} mm`);
+    if (m.sns_front_raw === undefined) return;  // firmware cũ
+    calPin('calFront', $('snsFrontEn').checked, m.sns_front_raw, $('snsFrontLow').value === '1', !!m.sns_front_hit);
+    calPin('calBack', $('snsBackEn').checked, m.sns_back_raw, $('snsBackLow').value === '1', !!m.sns_back_hit);
+    TOFS.forEach((t, i) => renderTof(t, i, m));
   }
 
   // ===== Phần cứng: ẩn phần giao diện của bộ phận không có =====
@@ -1402,7 +1513,13 @@ constexpr const char* kWebUiHtml = R"HTML(
           const cls = msg.level === 'E' ? 'log-error' : msg.level === 'W' ? 'log-warn' : msg.level === 'D' ? 'log-debug' : 'log-info';
           appendLogLine(msg.level, msg.msg, cls);
         } else if (msg.type === 'chat_reply') {
-          addChatMsg('robot', msg.text);
+          if (msg.tool === 'ai') addChatMsg('system', '🤖 Đang hỏi AI…');
+          else if (msg.text) addChatMsg('robot', msg.text);
+        } else if (msg.type === 'chat_ai') {
+          // role "user" = câu robot nghe được (giọng nói); câu gõ từ web đã hiện sẵn nên bỏ trùng.
+          if (msg.role === 'assistant') addChatMsg('robot', msg.text);
+          else if (msg.text !== lastChatSent) addChatMsg('user', '🎤 ' + msg.text);
+          lastChatSent = null;
         } else if (msg.type === 'status') {
           if (typeof msg.wheel_ready === 'boolean') renderWheel(msg.wheel_ready, msg.left_speed || 0, msg.right_speed || 0);
           if (typeof msg.left_speed === 'number' && typeof msg.right_speed === 'number') {
@@ -1729,6 +1846,9 @@ constexpr const char* kWebUiHtml = R"HTML(
     $('btnSaveSettings').addEventListener('click', saveSettings);
     $('btnSaveLife').addEventListener('click', saveLife);
     $('btnSaveSns').addEventListener('click', saveSensors);
+    $('btnCalReset').addEventListener('click', () => {
+      TOFS.forEach((t, i) => { calTof[i].min = calTof[i].max = null; setCal(t.cal + 'MinMax', '—', ''); });
+    });
     $('btnSaveHw').addEventListener('click', saveHardware);
     $('btnFwUpload').addEventListener('click', uploadFirmware);
     $('btnFwUrl').addEventListener('click', installFirmwareUrl);
@@ -1954,6 +2074,22 @@ bool RobotWebUiServer::Start(int port) {
             ESP_LOGI(TAG, "WebSocket ready at ws://<device-ip>:%d/ws", port);
         }
     }
+    // Chat AI: day cau hoi (STT) va cau tra loi cua AI sang tab Chat cua WebUI.
+    Application::GetInstance().RegisterChatTextCallback([this](const std::string& role, const std::string& text) {
+        if (GetWsClientCount() == 0) {
+            return;
+        }
+        cJSON* r = cJSON_CreateObject();
+        cJSON_AddStringToObject(r, "type", "chat_ai");
+        cJSON_AddStringToObject(r, "role", role.c_str());
+        cJSON_AddStringToObject(r, "text", text.c_str());
+        char* out = cJSON_PrintUnformatted(r);
+        if (out != nullptr) {
+            BroadcastJson(out);
+            cJSON_free(out);
+        }
+        cJSON_Delete(r);
+    });
         // === PHASE 3: status broadcast task ===
     BaseType_t st_ok = xTaskCreatePinnedToCore(
         &RobotWebUiServer::StatusBroadcastTaskEntry,
@@ -3554,9 +3690,16 @@ void RobotWebUiServer::HandleChat(int fd, const char* json_text, size_t len) {
     }
 
     if (!handled) {
-        reply =
-            "Không hiểu lệnh. Thử: 'đi thẳng 2 giây', 'dừng', "
-            "'qua trái', 'gật đầu', 'lắc đầu', 'về center'";
+        // Khong phai lenh co san -> hoi AI nhu khi noi chuyen bang giong noi.
+        if (Application::GetInstance().SendTextToAi(text)) {
+            tool = "ai";
+            reply = "";  // cau tra loi cua AI se den qua tin nhan "chat_ai"
+            handled = true;
+        } else {
+            reply =
+                "Không hiểu lệnh và robot chưa kết nối AI. Thử: 'đi thẳng 2 giây', 'dừng', "
+                "'qua trái', 'gật đầu', 'lắc đầu', 'về center'";
+        }
     }
 
     ESP_LOGI(TAG, "chat fd=%d text=\"%s\" → %s",

@@ -112,6 +112,11 @@ public:
     bool CanEnterSleepMode();
     void SendMcpMessage(const std::string& payload);
     void RegisterMcpBroadcastCallback(std::function<void(const std::string&)> callback);
+    // Gui cau chu (vd tu chat WebUI) len AI nhu khi noi; AI tra loi bang giong noi nhu binh thuong.
+    // Tra false neu chua co ket noi server.
+    bool SendTextToAi(const std::string& text);
+    // Nhan cau hoi (role "user", tu STT) va cau tra loi (role "assistant") cua AI.
+    void RegisterChatTextCallback(std::function<void(const std::string& role, const std::string& text)> callback);
     void SetAecMode(AecMode mode);
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
@@ -145,6 +150,7 @@ private:
     std::unique_ptr<Ota> ota_;
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
+    std::function<void(const std::string&, const std::string&)> chat_text_callback_;
 
     bool has_server_time_ = false;
     bool aborted_ = false;

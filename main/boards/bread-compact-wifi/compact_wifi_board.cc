@@ -184,10 +184,10 @@ private:
     }
 
     // Thu hoi tai nguyen man phu khi khoi tao that bai giua chung.
+    // Giu lai bus I2C (21/38): cam bien ToF thu 2 van dung duoc khi khong lap man phu.
     void ReleaseSecondDisplay() {
         if (panel2_ != nullptr) { esp_lcd_panel_del(panel2_); panel2_ = nullptr; }
         if (panel2_io_ != nullptr) { esp_lcd_panel_io_del(panel2_io_); panel2_io_ = nullptr; }
-        if (display2_i2c_bus_ != nullptr) { i2c_del_master_bus(display2_i2c_bus_); display2_i2c_bus_ = nullptr; }
     }
 
     // Man phu la tuy chon: neu khong co/loi thi giu man chinh (face) va chay binh thuong.
@@ -473,9 +473,17 @@ private:
                 true);
         }
 
-        // Cam bien an toan: VL6180X dung chung bus I2C voi OLED chinh (41/42).
+        // Cam bien an toan: ToF 1 chung bus OLED chinh (41/42), ToF 2 chung bus OLED phu (21/38).
+        // Moi bus 1 ToF vi VL6180X/VL53L0X deu co dia chi co dinh 0x29.
         if (sensor_hub_ == nullptr) {
-            sensor_hub_ = new RobotSensorHub(wheel_motor_, display_i2c_bus_);
+            i2c_master_bus_handle_t tof2_bus = nullptr;
+#ifdef CONFIG_BREAD_COMPACT_WIFI_DUAL_OLED
+            if (display2_i2c_bus_ == nullptr) {
+                InitializeDisplay2I2c();  // khong co man phu van tao bus cho ToF 2
+            }
+            tof2_bus = display2_i2c_bus_;
+#endif
+            sensor_hub_ = new RobotSensorHub(wheel_motor_, display_i2c_bus_, tof2_bus);
             sensor_hub_->Start();
         }
 

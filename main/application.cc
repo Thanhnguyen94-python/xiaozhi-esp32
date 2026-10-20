@@ -895,6 +895,9 @@ void Application::InitializeProtocol() {
                 auto text = cJSON_GetObjectItem(root, "text");
                 if (cJSON_IsString(text)) {
                     ESP_LOGI(TAG, "<< %s", text->valuestring);
+                    if (chat_text_callback_) {
+                        chat_text_callback_("assistant", text->valuestring);
+                    }
                     Schedule([display, message = std::string(text->valuestring)]() {
                         display->SetChatMessage("assistant", message.c_str());
                     });
@@ -904,6 +907,9 @@ void Application::InitializeProtocol() {
             auto text = cJSON_GetObjectItem(root, "text");
             if (cJSON_IsString(text)) {
                 ESP_LOGI(TAG, ">> %s", text->valuestring);
+                if (chat_text_callback_) {
+                    chat_text_callback_("user", text->valuestring);
+                }
                 std::string user_text = text->valuestring;
                 Schedule([display, message = std::string(text->valuestring)]() {
                     display->SetChatMessage("user", message.c_str());
@@ -1462,6 +1468,44 @@ bool Application::CanEnterSleepMode() {
 
 void Application::RegisterMcpBroadcastCallback(std::function<void(const std::string&)> callback) {
     mcp_broadcast_callback_ = std::move(callback);
+}
+
+void Application::RegisterChatTextCallback(
+        std::function<void(const std::string& role, const std::string& text)> callback) {
+    chat_text_callback_ = std::move(callback);
+}
+
+bool Application::SendTextToAi(const std::string& text) {
+    if (!protocol_ || text.empty()) {
+        return false;
+    }
+    Schedule([this, text]() {
+        if (!protocol_) {
+            return;
+        }
+        auto state = GetDeviceState();
+        if (state == kDeviceStateSpeaking) {
+            AbortSpeaking(kAbortReasonNone);
+        } else if (state != kDeviceStateIdle && state != kDeviceStateListening) {
+            ESP_LOGW(TAG, "SendTextToAi: dang ban (state=%d), bo qua", (int)state);
+            return;
+        }
+        if (!protocol_->IsAudioChannelOpened()) {
+            SetDeviceState(kDeviceStateConnecting);
+            Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+            if (!protocol_->OpenAudioChannel()) {
+                SetDeviceState(kDeviceStateIdle);
+                return;
+            }
+        }
+        ESP_LOGI(TAG, "Text -> AI: %s", text.c_str());
+        // Server xu ly "detect" + text nhu mot cau nguoi dung noi, roi tra loi bang TTS.
+        protocol_->SendWakeWordDetected(text);
+        if (GetDeviceState() != kDeviceStateListening) {
+            SetListeningMode(GetDefaultListeningMode());
+        }
+    });
+    return true;
 }
 
 void Application::SendMcpMessage(const std::string& payload) {
